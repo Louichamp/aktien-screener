@@ -1,0 +1,80 @@
+name: Daily Screener Update
+
+# Rotierender Auto-Update: frischt täglich die ältesten Werte neu auf, zeigt
+# immer das gesamte angesammelte Universum (so viel wie geht) und deployt zu Netlify.
+on:
+  schedule:
+    - cron: "0 7 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: "Wie viele älteste Werte auffrischen ('all' = komplett neu)"
+        required: false
+      limit:
+        description: "Universumsgröße (leer = Repo-Variable / 5000)"
+        required: false
+      source:
+        description: "sp500 oder broad (leer = Repo-Variable / broad)"
+        required: false
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      DATABASE_URL: "sqlite+aiosqlite:///./ci.db"
+      LIMIT: ${{ github.event.inputs.limit || vars.SCREENER_LIMIT || '5000' }}
+      SOURCE: ${{ github.event.inputs.source || vars.SCREENER_SOURCE || 'broad' }}
+      REFRESH: ${{ github.event.inputs.refresh || vars.SCREENER_REFRESH || '1500' }}
+      YF_MAX_CONCURRENCY: "6"
+      NEXT_PUBLIC_GOATCOUNTER: ${{ vars.GOATCOUNTER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Snapshot-Cache über Läufe hinweg (rollierender Schlüssel): so weiß der
+      # nächste Lauf, was am ältesten ist, und das Universum wächst zusammen.
+      - name: Snapshot-Cache wiederherstellen
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: snapshots-${{ github.run_id }}
+          restore-keys: |
+            snapshots-
+
+      - name: Python-Abhängigkeiten (ohne torch — statistischer Forecast)
+        run: |
+          python -m pip install --upgrade pip
+          pip install "sqlalchemy[asyncio]>=2.0" aiosqlite pydantic fastapi httpx lxml pandas yfinance
+
+      - name: Rotierender Sync (älteste zuerst) + Forecast
+        run: >
+          python scripts/rotating_sync.py
+          --cache .cache/snapshots.pkl
+          --refresh "$REFRESH" --limit "$LIMIT" --source "$SOURCE" --passes 3
+
+      - name: Statisch exportieren (JSON)
+        run: python scripts/export_static.py
+
+      - name: Frontend bauen
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Deploy zu Netlify (inkl. Passwortschutz-Edge-Function)
+        run: npx --yes netlify-cli deploy --prod --dir=frontend/out --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}

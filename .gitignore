@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Lokale DBs / Artefakte
+*.db
+*.sqlite
+logs/
+
+# Env / Secrets
+.env
+
+# Frontend (eigene .gitignore unter frontend/)

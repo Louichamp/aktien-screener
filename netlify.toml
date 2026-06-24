@@ -1,0 +1,14 @@
+# Netlify hostet die fertige statische Seite (gebaut in GitHub Actions bzw. lokal
+# via build_site.py) — Netlify baut hier NICHT selbst.
+[build]
+  publish = "frontend/out"
+
+# Passwortschutz: die Edge Function in netlify/edge-functions/auth.js wird
+# automatisch erkannt (in-source `config.path = "/*"`) und liest SITE_PASSWORD.
+
+# SPA-Fallback für unbekannte Pfade (greift NICHT für existierende Dateien wie
+# /data/*.json oder /asset/).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

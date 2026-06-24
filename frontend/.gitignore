@@ -1,0 +1,8 @@
+node_modules
+.next
+out
+.env.local
+next-env.d.ts
+*.tsbuildinfo
+# Exportierte Daten werden lokal/CI erzeugt (nicht eingecheckt).
+public/data/

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p scoring/computors screener/sources infrastructure/database api tests)",
+      "Bash(mv domain.py context.py computor.py registry.py composites.py normalization.py engine.py scoring/)",
+      "Bash(mv fund_quality.py growth.py momentum.py risk.py trend.py valuation.py market_leadership.py scoring/computors/)",
+      "Bash(mv zones.py levels.py status.py row.py strategies.py pipeline.py screener/)",
+      "Bash(mv fibonacci.py gaps.py moving_average.py swing.py volume_profile.py screener/sources/)",
+      "Bash(python -c \"import sqlalchemy, fastapi, httpx, pydantic, aiosqlite; print\\('deps ok', sqlalchemy.__version__, pydantic.VERSION\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"import sqlalchemy, fastapi, httpx, pydantic, aiosqlite; print\\('deps ok', sqlalchemy.__version__, 'pydantic', pydantic.VERSION\\)\")",
+      "Bash(python -m pip install -q \"sqlalchemy>=2.0\" fastapi httpx pydantic aiosqlite)",
+      "PowerShell($pythons = @\\(\"python\",\"py\",\"python3\"\\); foreach\\($p in $pythons\\){ try { $v = & $p --version 2>&1; Write-Output \"$p -> $v \\($\\(\\(Get-Command $p -ErrorAction SilentlyContinue\\).Source\\)\\)\" } catch {} }; Write-Output \"--- pip ---\"; try { python -m pip --version } catch { Write-Output \"no pip on python\" })",
+      "PowerShell(py -m venv .venv)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pip install -q --upgrade pip)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pip install -q \"sqlalchemy[asyncio]>=2.0\" fastapi httpx pydantic aiosqlite)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import sqlalchemy, fastapi, httpx, pydantic, aiosqlite; print\\('deps ok', sqlalchemy.__version__, 'pydantic', pydantic.VERSION\\)\")",
+      "Bash(sed -n '120,150p' screener/pipeline.py)",
+      "Bash(sed -n '17,45p' scoring/domain.py)",
+      "Bash(ls -la \"C:/Users/Louis Först/.claude/projects/\" 2>/dev/null | head; echo \"---try win path---\"; ls \"C:/Users/Louis Först/.claude/projects/D--Trade-rian-screener/\" 2>/dev/null || echo \"missing\")",
+      "PowerShell($node = \\(Get-Command node -ErrorAction SilentlyContinue\\); $npm = \\(Get-Command npm -ErrorAction SilentlyContinue\\); if\\($node\\){ \"node: $\\(node --version\\) @ $\\($node.Source\\)\" } else { \"node: NOT FOUND\" }; if\\($npm\\){ \"npm: $\\(npm --version\\)\" } else { \"npm: NOT FOUND\" })",
+      "PowerShell(cd frontend; $env:NEXT_TELEMETRY_DISABLED=1; npm run build 2>&1 | Select-Object -Last 40)",
+      "PowerShell($ok=$false; foreach\\($i in 1..20\\){ try { $h = Invoke-RestMethod http://localhost:8000/health -TimeoutSec 2; if\\($h.status -eq 'ok'\\){ $ok=$true; break } } catch { Start-Sleep -Milliseconds 500 } }; if\\(-not $ok\\){ \"API not up\"; exit 1 }; \"health OK\"; \"--- sorted by total_score desc, limit 3 ---\"; $r = Invoke-RestMethod \"http://localhost:8000/api/v1/screener?sort_by=total_score&sort_dir=desc&limit=3\"; \"total=$\\($r.total\\)\"; $r.items | ForEach-Object { \"$\\($_.ticker\\)  total=$\\($_.total_score\\)  wlatar=$\\($_.wlatar\\)  strat=$\\($_.strategy_tag\\)\" }; \"--- filter WACHSTUM ---\"; $f = Invoke-RestMethod \"http://localhost:8000/api/v1/screener?strategy=WACHSTUM\"; \"WACHSTUM total=$\\($f.total\\): $\\(\\( $f.items | ForEach-Object { $_.ticker }\\) -join ', '\\)\")"
+    ]
+  }
+}

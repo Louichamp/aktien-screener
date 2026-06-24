@@ -1,0 +1,37 @@
+# Louichamp Screener — Laufzeit- und Test-Abhängigkeiten
+# Produktion: PostgreSQL via asyncpg; Tests: SQLite via aiosqlite.
+
+# --- API / Persistenz ---
+fastapi>=0.137
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0
+pydantic>=2.11
+asyncpg>=0.29          # PostgreSQL-Treiber (Produktion)
+
+# --- Worker / Queue ---
+arq>=0.26
+redis>=5.0
+
+# --- Migrationen / Konfiguration ---
+alembic>=1.13
+python-dotenv>=1.0
+
+# --- Markt-Daten-Provider ---
+# Yahoo Finance (Default, KOSTENLOS, kein Key) für das volle Universum:
+yfinance>=0.2          # OHLCV + Fundamentaldaten + News
+pandas>=2.0            # von yfinance/Kronos genutzt
+lxml>=5.0              # HTML/CSV-Parsing der Universe-Quellen
+# Financial Modeling Prep (optional, DATA_PROVIDER=fmp) nutzt httpx (s.u.).
+
+# --- Kronos-Inferenz (PyTorch) ---
+# Schwer + GPU-abhängig; lazy importiert. In Produktion installieren:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch>=2.2            # nur Produktion (forecast-Worker)
+transformers>=4.40    # nur Produktion (forecast-Worker)
+numpy>=1.26           # nur Produktion (Band-Statistik)
+
+# --- Tests ---
+httpx>=0.28
+aiosqlite>=0.20        # SQLite-Async-Treiber (Tests, JSONB-Fallback)
+pytest>=8.0
+pytest-asyncio>=0.24

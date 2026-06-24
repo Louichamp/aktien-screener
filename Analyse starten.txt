@@ -1,0 +1,2 @@
+python scripts\rotating_sync.py --cache .cache\snapshots.pkl --refresh all --limit 5000 --source broad
+python scripts\build_site.py --deploy
