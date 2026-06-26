@@ -15,12 +15,31 @@ https://app.netlify.com/drop ziehen.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _verify_output(out: Path) -> None:
+    """Safety-Gate: nur fortfahren, wenn der Build eine vollständige, nicht-leere
+    Seite erzeugt hat (verhindert Deploy einer kaputten/leeren Seite)."""
+    index = out / "index.html"
+    screener = out / "data" / "screener.json"
+    if not index.exists():
+        raise SystemExit(f"FEHLER: {index} fehlt — Build unvollständig, kein Deploy.")
+    if not screener.exists():
+        raise SystemExit(f"FEHLER: {screener} fehlt — keine Daten, kein Deploy.")
+    try:
+        n = len(json.loads(screener.read_text(encoding="utf-8")).get("items", []))
+    except Exception as exc:
+        raise SystemExit(f"FEHLER: screener.json unlesbar ({exc}) — kein Deploy.")
+    if n == 0:
+        raise SystemExit("FEHLER: screener.json enthält 0 Instrumente — kein Deploy.")
+    print(f"   Safety-Gate ok: {n} Instrumente im Build.", flush=True)
 
 
 def main() -> None:
@@ -40,6 +59,7 @@ def main() -> None:
     subprocess.check_call([npm, "run", "build"], cwd=str(frontend), env=env)
 
     out = frontend / "out"
+    _verify_output(out)
     if deploy:
         # Vom Projekt-Root deployen, damit netlify.toml + die Edge Function
         # (Passwortschutz) in netlify/edge-functions/ mit hochgeladen werden.
@@ -47,9 +67,9 @@ def main() -> None:
         subprocess.check_call(
             [npx, "--yes", "netlify-cli", "deploy", "--prod", "--dir", "frontend/out"],
             cwd=str(ROOT), env=env)
-        print("\n✅ Live deployed.")
+        print("\n[FERTIG] live deployed.")
     else:
-        print(f"\n✅ Fertig. Statische Seite: {out}")
+        print(f"\n[FERTIG] Statische Seite: {out}")
         print("   Hochladen: den Ordner 'out' auf https://app.netlify.com/drop ziehen")
         print("   oder einmalig Netlify-CLI einrichten und künftig:  build_site.py --deploy")
 

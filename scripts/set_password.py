@@ -38,7 +38,7 @@ def main() -> None:
     env_set("SITE_PASSWORD", password)
     if user:
         env_set("SITE_USER", user)
-    print("\n✅ Passwort gesetzt. Aktiv ab dem nächsten Deploy "
+    print("\n[OK] Passwort gesetzt. Aktiv ab dem nächsten Deploy "
           "(z. B. `python scripts/build_site.py --deploy`).")
 
 

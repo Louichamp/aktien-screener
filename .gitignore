@@ -8,6 +8,7 @@ __pycache__/
 *.db
 *.sqlite
 logs/
+.cache/
 
 # Env / Secrets
 .env

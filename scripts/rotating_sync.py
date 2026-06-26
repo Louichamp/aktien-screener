@@ -138,8 +138,15 @@ async def main() -> None:
         await provider.aclose()
 
     cache.update(fresh)
-    # Auf das aktuelle Universum begrenzen (Delistings entfernen, Wachstum bremsen).
-    cache = {t: s for t, s in cache.items() if t in universe_set}
+    # Auf das aktuelle Universum begrenzen (Delistings raus, Wachstum bremsen) —
+    # ABER nur, wenn die Universe-Quelle plausibel ist. Kam sie verdächtig klein
+    # zurück (Fallback-Liste wegen Netzfehler), NICHT beschneiden, sonst würde der
+    # mühsam angesammelte Cache zerstört ("plötzlich fast nichts").
+    if len(universe_set) >= max(100, len(cache) // 2):
+        cache = {t: s for t, s in cache.items() if t in universe_set}
+    elif cache:
+        print(f"Universe verdächtig klein ({len(universe_set)}) — Cache NICHT "
+              f"beschnitten, {len(cache)} Werte behalten.", flush=True)
 
     if not cache:
         print("Cache leer (alles gedrosselt?) — KEIN Deploy, alte Seite bleibt online.",

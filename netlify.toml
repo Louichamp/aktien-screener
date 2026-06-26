@@ -1,13 +1,21 @@
-# Netlify hostet die fertige statische Seite (gebaut in GitHub Actions bzw. lokal
-# via build_site.py) — Netlify baut hier NICHT selbst.
+# Netlify HOSTET nur die fertige statische Seite. Gebaut + deployt wird
+# ausschließlich per CLI — aus GitHub Actions (täglich) oder lokal via
+# `build_site.py --deploy` — NICHT von Netlify selbst.
+#
+# Warum: Der Python-Daten-Pipeline-Schritt kann auf Netlify nicht laufen. Würde
+# Netlify bei jedem Git-Push selbst bauen, käme eine Seite OHNE Daten heraus und
+# würde die per CLI deployten echten Daten überschreiben. `ignore = "exit 0"`
+# bricht den Netlify-eigenen Git-Build immer ab (exit 0 = "nichts zu bauen");
+# CLI-Deploys (`netlify deploy`) umgehen diese Regel und funktionieren normal.
 [build]
   publish = "frontend/out"
+  ignore = "exit 0"
 
-# Passwortschutz: die Edge Function in netlify/edge-functions/auth.js wird
-# automatisch erkannt (in-source `config.path = "/*"`) und liest SITE_PASSWORD.
+# Passwortschutz: die Edge Function in netlify/edge-functions/auth.js wird beim
+# CLI-Deploy (aus dem Repo-Root) automatisch erkannt und liest SITE_PASSWORD.
 
 # SPA-Fallback für unbekannte Pfade (greift NICHT für existierende Dateien wie
-# /data/*.json oder /asset/).
+# /data/*.json oder /asset/, die werden direkt ausgeliefert).
 [[redirects]]
   from = "/*"
   to = "/index.html"

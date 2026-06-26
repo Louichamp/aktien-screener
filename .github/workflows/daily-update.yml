@@ -73,6 +73,16 @@ jobs:
           npm ci
           npm run build
 
+      # Safety-Gate: nur deployen, wenn der Build wirklich eine vollständige,
+      # nicht-leere Seite erzeugt hat. Sonst Job abbrechen -> kein Deploy ->
+      # die zuletzt live deployte Seite bleibt unverändert online.
+      - name: Build-Output prüfen
+        run: |
+          test -f frontend/out/index.html || { echo "::error::frontend/out/index.html fehlt"; exit 1; }
+          test -f frontend/out/asset/index.html || { echo "::error::asset-Seite fehlt"; exit 1; }
+          test -f frontend/out/data/screener.json || { echo "::error::screener.json fehlt"; exit 1; }
+          python -c "import json,sys; d=json.load(open('frontend/out/data/screener.json')); n=len(d.get('items',[])); print('items im Build:', n); sys.exit(0 if n>0 else 1)"
+
       - name: Deploy zu Netlify (inkl. Passwortschutz-Edge-Function)
         run: npx --yes netlify-cli deploy --prod --dir=frontend/out --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN"
         env:
