@@ -58,6 +58,15 @@ async def main() -> None:
             s, ScreenerFilters(), sort_by="total_score", descending=True, limit=args.limit)
         facets = await query_facets(s)
 
+    # Data-Safety: NIE einen leeren Stand schreiben (würde gute Daten überschreiben).
+    if not rows:
+        await engine.dispose()
+        if provider is not None and hasattr(provider, "aclose"):
+            await provider.aclose()
+        print("FEHLER: 0 Instrumente in der DB — Export abgebrochen, vorhandene "
+              "Daten bleiben erhalten.", file=sys.stderr)
+        raise SystemExit(1)
+
     items = [ScreenerRowSchema.model_validate(r).model_dump(mode="json") for r in rows]
     _write_json(out / "screener.json", {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
