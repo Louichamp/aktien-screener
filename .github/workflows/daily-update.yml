@@ -74,6 +74,14 @@ jobs:
           npm ci
           npm run build
 
+      - name: Debug Build Output
+        run: |
+          pwd
+          echo "===== frontend/out ====="
+          ls -R frontend/out || true
+          echo "===== find ====="
+          find frontend/out -maxdepth 3 -print || true
+
       - name: Build-Output prüfen (Debug + Safety-Gate)
         run: |
           echo "=== Arbeitsverzeichnis ==="
