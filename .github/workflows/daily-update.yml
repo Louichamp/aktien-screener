@@ -1,7 +1,5 @@
 name: Daily Screener Update
 
-# Rotierender Auto-Update: frischt täglich die ältesten Werte neu auf, zeigt
-# immer das gesamte angesammelte Universum (so viel wie geht) und deployt zu Netlify.
 on:
   schedule:
     - cron: "0 7 * * 1-5"
@@ -45,8 +43,6 @@ jobs:
         with:
           node-version: "20"
 
-      # Snapshot-Cache über Läufe hinweg (rollierender Schlüssel): so weiß der
-      # nächste Lauf, was am ältesten ist, und das Universum wächst zusammen.
       - name: Snapshot-Cache wiederherstellen
         uses: actions/cache@v4
         with:
@@ -80,6 +76,10 @@ jobs:
 
       - name: Build-Output prüfen (Debug + Safety-Gate)
         run: |
+          echo "=== Arbeitsverzeichnis ==="
+          pwd
+
+          echo ""
           echo "=== frontend/out Struktur ==="
           find frontend/out -maxdepth 3 | sort
 
@@ -88,16 +88,10 @@ jobs:
           test -f frontend/out/index.html \
             || { echo "::error::frontend/out/index.html fehlt"; exit 1; }
           test -f frontend/out/asset/index.html \
-            || { echo "::error::frontend/out/asset/index.html fehlt"; exit 1; }
+            || { echo "::error::frontend/out/asset/index.html fehlt (trailingSlash prüfen)"; exit 1; }
           test -f frontend/out/data/screener.json \
             || { echo "::error::frontend/out/data/screener.json fehlt"; exit 1; }
-          python -c "
-import json, sys
-d = json.load(open('frontend/out/data/screener.json'))
-n = len(d.get('items', []))
-print(f'screener.json: {n} items')
-sys.exit(0 if n > 0 else 1)
-"
+          python -c "import json,sys; d=json.load(open('frontend/out/data/screener.json')); n=len(d.get('items',[])); print(f'screener.json: {n} items'); sys.exit(0 if n>0 else 1)"
 
       - name: Deploy zu Netlify
         run: |
