@@ -41,7 +41,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       # Snapshot-Cache über Läufe hinweg (rollierender Schlüssel): so weiß der
       # nächste Lauf, was am ältesten ist, und das Universum wächst zusammen.
@@ -68,10 +68,9 @@ jobs:
         run: python scripts/export_static.py
 
       - name: Frontend bauen
-        run: |
-          cd frontend
-          npm ci
-          npm run build
+  run: |
+    npm ci --prefix frontend
+    npm run build --prefix frontend
 
       # Safety-Gate: nur deployen, wenn der Build wirklich eine vollständige,
       # nicht-leere Seite erzeugt hat. Sonst Job abbrechen -> kein Deploy ->
