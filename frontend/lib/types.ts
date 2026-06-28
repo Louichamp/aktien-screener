@@ -120,7 +120,7 @@ export interface ScreenerListResponse {
 export type SortBy =
   | "ticker" | "name" | "sector" | "country" | "price" | "dividend_yield"
   | "wlatar" | "wlafar" | "total_score" | "rating" | "status" | "strategy"
-  | "risk_class" | "data_as_of" | "updated_at";
+  | "risk_class" | "data_as_of" | "updated_at" | "chance_dots";
 export type SortDir = "asc" | "desc";
 
 export interface ScreenerQuery {
@@ -140,6 +140,7 @@ export interface ScreenerQuery {
   min_dividend_yield?: number;
   max_risk_level?: number;
   tickers?: string;
+  rare_only?: boolean;
   sort_by?: SortBy;
   sort_dir?: SortDir;
   limit?: number;

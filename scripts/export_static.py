@@ -36,7 +36,7 @@ def _write_json(path: Path, data) -> None:
 
 async def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(ROOT / "frontend" / "public" / "data"))
+    ap.add_argument("--out", default=str(ROOT / "frontend" / "out" / "data"))
     ap.add_argument("--limit", type=int, default=100_000)
     ap.add_argument("--with-news", action="store_true",
                     help="Live-News je Ticker mitexportieren (langsam; nur kleine Universen)")
