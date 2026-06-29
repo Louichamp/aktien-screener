@@ -72,30 +72,43 @@ def _select_oldest(universe_tickers: list[str], cache: dict, n: int) -> list[str
     return sorted(universe_tickers, key=key)[:n]
 
 
-async def _fetch_batch(provider, batch: list[str], by_sym: dict, *, passes: int) -> dict:
-    """Beschafft `batch` (resilient, mehrere Pässe über Fehlversuche)."""
+async def _fetch_batch(provider, batch: list[str], by_sym: dict,
+                       *, passes: int, chunk_size: int = 200) -> dict:
+    """Beschafft `batch` resilient in Chunks (Fortschritt alle ~chunk_size Stocks).
+
+    Chunks geben dem CI-Log Feedback und vermeiden, dass ein einzelner großer
+    asyncio.gather-Aufruf viel Speicher auf einmal bindet.
+    """
     got: dict = {}
     todo = list(batch)
     for p in range(1, passes + 1):
         if not todo:
             break
-        results = await asyncio.gather(*(provider.fetch(t) for t in todo))
         failed: list[str] = []
-        for sym, snap in zip(todo, results):
-            if snap is None:
-                failed.append(sym)
-                continue
-            e = by_sym.get(sym, {})
-            if not snap.name:
-                snap.name = e.get("name")
-            if not snap.sector:
-                snap.sector = e.get("sector")
-            snap.as_of = _now_iso()
-            got[sym] = snap
-        print(f"  Pass {p}/{passes}: {len(got)}/{len(batch)} ok, {len(failed)} offen", flush=True)
+        done_this_pass = 0
+        for i in range(0, len(todo), chunk_size):
+            chunk = todo[i: i + chunk_size]
+            results = await asyncio.gather(*(provider.fetch(t) for t in chunk),
+                                           return_exceptions=True)
+            for sym, snap in zip(chunk, results):
+                if snap is None or isinstance(snap, Exception):
+                    failed.append(sym)
+                    continue
+                e = by_sym.get(sym, {})
+                if not snap.name:
+                    snap.name = e.get("name")
+                if not snap.sector:
+                    snap.sector = e.get("sector")
+                snap.as_of = _now_iso()
+                got[sym] = snap
+                done_this_pass += 1
+            pct = (i + len(chunk)) / len(todo) * 100
+            print(f"  Pass {p}/{passes}: {i + len(chunk)}/{len(todo)} verarbeitet "
+                  f"({pct:.0f}%) — {done_this_pass} ok, {len(failed)} offen", flush=True)
         todo = failed
         if todo and p < passes:
-            await asyncio.sleep(15)
+            print(f"  Pause 20s vor Retry-Pass {p + 1} ({len(todo)} offen) …", flush=True)
+            await asyncio.sleep(20)
     return got
 
 
@@ -103,9 +116,10 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=str(ROOT / ".cache" / "snapshots.pkl"))
     ap.add_argument("--refresh", default="1500", help="Anzahl ältester Werte oder 'all'")
-    ap.add_argument("--limit", type=int, default=5000)
+    ap.add_argument("--limit", type=int, default=5250)
     ap.add_argument("--source", choices=["sp500", "broad"], default="broad")
-    ap.add_argument("--passes", type=int, default=2)
+    ap.add_argument("--passes", type=int, default=3)
+    ap.add_argument("--chunk", type=int, default=200, help="Fetch-Chunk-Größe für Progress-Logging")
     ap.add_argument("--forecast-backend", default="statistical")
     ap.add_argument("--horizon", type=int, default=30)
     args = ap.parse_args()
@@ -129,11 +143,20 @@ async def main() -> None:
     refresh_all = str(args.refresh).lower() == "all"
     n = len(universe_tickers) if refresh_all else max(0, int(args.refresh))
     batch = _select_oldest(universe_tickers, cache, n)
-    print(f"Auffrischen: {len(batch)} Werte (von {len(universe_tickers)}; "
-          f"{'alle' if refresh_all else 'älteste zuerst'})", flush=True)
+
+    cached_total = len(cache)
+    missing = len([t for t in universe_tickers if t not in cache])
+    print(f"Cache: {cached_total} vorhanden, {missing} noch nie beschafft, "
+          f"{len(universe_tickers)} im Universum", flush=True)
+    if missing > 0 and not refresh_all:
+        print(f"  Bootstrap-Hinweis: {missing} Stocks noch nie gesehen. "
+              f"Noch {missing // n + 1} Laeufe bis vollstaendige Abdeckung.", flush=True)
+    print(f"Auffrischen: {len(batch)} Werte ({'alle' if refresh_all else 'älteste zuerst'})",
+          flush=True)
 
     provider = build_market_data_provider("yahoo")
-    fresh = await _fetch_batch(provider, batch, by_sym, passes=args.passes)
+    fresh = await _fetch_batch(provider, batch, by_sym, passes=args.passes,
+                               chunk_size=args.chunk)
     if hasattr(provider, "aclose"):
         await provider.aclose()
 
