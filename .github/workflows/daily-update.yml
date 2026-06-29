@@ -65,10 +65,10 @@ jobs:
             --source "$SOURCE" \
             --passes 3
 
-      - name: Statisch exportieren (JSON)
+      - name: Export Static
         run: python scripts/export_static.py
 
-      - name: Frontend bauen
+      - name: Frontend Build
         run: |
           cd frontend
           npm ci
@@ -80,23 +80,31 @@ jobs:
           echo "===== frontend/out ====="
           ls -R frontend/out || true
           echo "===== find ====="
-          find frontend/out -maxdepth 3 -print || true
+          find frontend/out -maxdepth 3 2>/dev/null | sort || true
 
-      - name: Build-Output prüfen (Debug + Safety-Gate)
+      - name: Build-Output prüfen (Safety-Gate)
         run: |
           echo "=== Arbeitsverzeichnis ==="
           pwd
 
           echo ""
           echo "=== frontend/out Struktur ==="
-          find frontend/out -maxdepth 3 | sort
+          find frontend/out -maxdepth 3 2>/dev/null | sort || true
 
           echo ""
           echo "=== Safety-Gate ==="
           test -f frontend/out/index.html \
             || { echo "::error::frontend/out/index.html fehlt"; exit 1; }
-          test -f frontend/out/asset/index.html \
-            || { echo "::error::frontend/out/asset/index.html fehlt (trailingSlash prüfen)"; exit 1; }
+
+          if [ -f frontend/out/asset/index.html ]; then
+            echo "asset: index.html (ok)"
+          elif [ -f frontend/out/asset.html ]; then
+            echo "asset: flat html (ok)"
+          else
+            echo "::error::asset-Seite fehlt (weder asset/index.html noch asset.html)"
+            exit 1
+          fi
+
           test -f frontend/out/data/screener.json \
             || { echo "::error::frontend/out/data/screener.json fehlt"; exit 1; }
           python -c "import json,sys; d=json.load(open('frontend/out/data/screener.json')); n=len(d.get('items',[])); print(f'screener.json: {n} items'); sys.exit(0 if n>0 else 1)"

@@ -38,8 +38,6 @@ class StructureLevelSource(BaseZoneSource):
             rng_low = min(c.l for c in recent)
             rng = rng_high - rng_low
             if rng < 1.5 * ctx.atr:
-                mid = (rng_high + rng_low) / 2
-                kind = "support" if mid < ctx.price else "resistance"
                 out.append(self.lvl(rng_high, "consolidation_top", 0.70,
                     f"Konsolidierungsbereich oben — enge Range {rng:.2f} (ATR {ctx.atr:.2f})",
                     "resistance" if ctx.price > rng_high else "support"))

@@ -48,7 +48,9 @@ class ForecastComputor(BaseComputor):
         ret_score = band(expected_return, [
             (-0.30, 0), (-0.15, 2), (-0.05, 4), (0.0, 5),
             (0.05, 6), (0.10, 7.5), (0.20, 9), (0.35, 10)
-        ]) or 5.0
+        ])
+        if ret_score is None:
+            ret_score = 5.0
 
         # Niedrige Konfidenz zieht Score in Richtung 5 (neutral)
         score = ret_score * confidence + 5.0 * (1.0 - confidence)

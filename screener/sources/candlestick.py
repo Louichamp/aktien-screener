@@ -74,7 +74,7 @@ def _engulfing_bear(prev: Candle, curr: Candle) -> bool:
 
 
 def _morning_star(a: Candle, b: Candle, c: Candle) -> bool:
-    """Dreikerzen-Muster: großer Bärner, kleiner Körper (Stern), großer Bulle."""
+    """Dreikerzen-Muster: großer Bär, kleiner Körper (Stern), großer Bulle."""
     return (_is_bear(a) and _body(a) >= 0.6 * _range(a) and
             _body(b) <= 0.30 * _body(a) and
             _is_bull(c) and _body(c) >= 0.5 * _body(a) and
