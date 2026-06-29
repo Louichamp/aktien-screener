@@ -2,14 +2,18 @@ name: Daily Screener Update
 
 on:
   schedule:
-    - cron: "0 7 * * 1-5"
+    # Täglich 07:00 UTC (inkl. Wochenende) — rollierender Update-Zyklus:
+    # 1500 Stocks/Lauf × 7 Läufe/Woche deckt 5000er-Universum ~2× ab.
+    # Max. Datenalter: ceil(5250/1500) ≈ 4 Tage.
+    - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       refresh:
-        description: "Wie viele älteste Werte auffrischen ('all' = komplett neu)"
+        description: "Anzahl ältester Werte auffrischen ('all' = Komplett-Rebuild)"
         required: false
+        default: "1500"
       limit:
-        description: "Universumsgröße (leer = Repo-Variable / 5000)"
+        description: "Universumsgröße (leer = Repo-Variable / 5250)"
         required: false
       source:
         description: "sp500 oder broad (leer = Repo-Variable / broad)"
@@ -22,14 +26,15 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
 
     env:
       DATABASE_URL: "sqlite+aiosqlite:///./ci.db"
-      LIMIT: ${{ github.event.inputs.limit || vars.SCREENER_LIMIT || '5000' }}
+      LIMIT: ${{ github.event.inputs.limit || vars.SCREENER_LIMIT || '5250' }}
       SOURCE: ${{ github.event.inputs.source || vars.SCREENER_SOURCE || 'broad' }}
       REFRESH: ${{ github.event.inputs.refresh || vars.SCREENER_REFRESH || '1500' }}
-      YF_MAX_CONCURRENCY: "6"
+      YF_MAX_CONCURRENCY: "10"
+      YF_PERIOD: "1y"
       NEXT_PUBLIC_GOATCOUNTER: ${{ vars.GOATCOUNTER }}
 
     steps:
