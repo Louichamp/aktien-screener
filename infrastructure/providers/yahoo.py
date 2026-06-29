@@ -70,10 +70,12 @@ class YahooMarketDataProvider:
         rev = _f(info.get("totalRevenue"))
         mcap = _f(info.get("marketCap"))
         d2e = _f(info.get("debtToEquity"))
+        d2e_ratio = (d2e / 100.0) if d2e is not None else None   # Yahoo gibt %, wir brauchen Ratio
         out = {
             "net_margin": _f(info.get("profitMargins")),
             "roic": _f(info.get("returnOnEquity")),          # ROE als ROIC-Näherung
-            "debt_to_equity": (d2e / 100.0) if d2e is not None else None,  # Yahoo gibt %
+            "debt_to_equity": d2e_ratio,
+            "debt_equity": d2e_ratio,                        # Alias für Computors
             "revenue_growth": _f(info.get("revenueGrowth")),
             "eps_growth": _f(info.get("earningsGrowth")),
             "pe": _f(info.get("trailingPE")),

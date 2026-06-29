@@ -17,18 +17,24 @@ let _cache: ScreenerData | null = null;
 
 export async function loadScreenerData(force = false): Promise<ScreenerData> {
   if (_cache && !force) return _cache;
-  // Cache-Bust pro Tag-Stunde, damit ein Neuladen nach Redeploy frische JSON zieht.
   const v = Math.floor(Date.now() / 60000);
   const res = await fetch(`${BASE}/data/screener.json?v=${v}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`screener.json nicht gefunden (${res.status})`);
+  if (res.status === 401 || res.status === 403 || !res.ok) {
+    throw new Error("Not authenticated or data not available");
+  }
+  if (!(res.headers.get("content-type") ?? "").includes("json")) {
+    throw new Error("Not authenticated or data not available");
+  }
   _cache = await res.json();
   return _cache!;
 }
 
 export async function loadDetail(ticker: string): Promise<ScreenerRowDetail | null> {
   const t = ticker.toUpperCase();
-  const res = await fetch(`${BASE}/data/detail/${encodeURIComponent(t)}.json`,
-    { cache: "no-store" });
+  const res = await fetch(`${BASE}/data/detail/${encodeURIComponent(t)}.json`, {
+    cache: "no-store",
+  });
   if (!res.ok) return null;
+  if (!(res.headers.get("content-type") ?? "").includes("json")) return null;
   return res.json();
 }

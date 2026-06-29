@@ -51,19 +51,19 @@ jobs:
           restore-keys: |
             snapshots-
 
-      - name: Python Dependencies
+      - name: Python-Abhängigkeiten
         run: |
           python -m pip install --upgrade pip
           pip install "sqlalchemy[asyncio]>=2.0" aiosqlite pydantic fastapi httpx lxml pandas yfinance
 
-      - name: Rotating Sync
-        run: >
-          python scripts/rotating_sync.py
-          --cache .cache/snapshots.pkl
-          --refresh "$REFRESH"
-          --limit "$LIMIT"
-          --source "$SOURCE"
-          --passes 3
+      - name: Rotierender Sync (älteste zuerst) + Forecast
+        run: |
+          python scripts/rotating_sync.py \
+            --cache .cache/snapshots.pkl \
+            --refresh "$REFRESH" \
+            --limit "$LIMIT" \
+            --source "$SOURCE" \
+            --passes 3
 
       - name: Export Static
         run: python scripts/export_static.py
@@ -74,26 +74,48 @@ jobs:
           npm ci
           npm run build
 
-      # 🔥 FIX: robust gegen asset.html vs asset/index.html
-      - name: Build-Output prüfen
+      - name: Debug Build Output
         run: |
-          test -f frontend/out/index.html || { echo "::error::index fehlt"; exit 1; }
+          pwd
+          echo "===== frontend/out ====="
+          ls -R frontend/out || true
+          echo "===== find ====="
+          find frontend/out -maxdepth 3 2>/dev/null | sort || true
+
+      - name: Build-Output prüfen (Safety-Gate)
+        run: |
+          echo "=== Arbeitsverzeichnis ==="
+          pwd
+
+          echo ""
+          echo "=== frontend/out Struktur ==="
+          find frontend/out -maxdepth 3 2>/dev/null | sort || true
+
+          echo ""
+          echo "=== Safety-Gate ==="
+          test -f frontend/out/index.html \
+            || { echo "::error::frontend/out/index.html fehlt"; exit 1; }
 
           if [ -f frontend/out/asset/index.html ]; then
             echo "asset: index.html (ok)"
           elif [ -f frontend/out/asset.html ]; then
             echo "asset: flat html (ok)"
           else
-            echo "::error::asset-Seite fehlt (weder index.html noch asset.html)"
+            echo "::error::asset-Seite fehlt (weder asset/index.html noch asset.html)"
             exit 1
           fi
 
-          test -f frontend/out/data/screener.json || { echo "::error::screener.json fehlt"; exit 1; }
+          test -f frontend/out/data/screener.json \
+            || { echo "::error::frontend/out/data/screener.json fehlt"; exit 1; }
+          python -c "import json,sys; d=json.load(open('frontend/out/data/screener.json')); n=len(d.get('items',[])); print(f'screener.json: {n} items'); sys.exit(0 if n>0 else 1)"
 
-          python -c "import json,sys; d=json.load(open('frontend/out/data/screener.json')); n=len(d.get('items',[])); print('items im Build:', n); sys.exit(0 if n>0 else 1)"
-
-      - name: Deploy Netlify
-        run: npx --yes netlify-cli deploy --prod --dir=frontend/out --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN"
+      - name: Deploy zu Netlify
+        run: |
+          npx --yes netlify-cli deploy \
+            --prod \
+            --dir=frontend/out \
+            --site "$NETLIFY_SITE_ID" \
+            --auth "$NETLIFY_AUTH_TOKEN"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}

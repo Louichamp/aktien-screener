@@ -5,18 +5,20 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ScreenerRow, SortBy } from "@/lib/types";
 import {
-  fmtPrice, fmtNum, fmtPct, fmtDate, fmtAge, ageColor, trendArrow, trendClass,
-  totalColor, riskColor, ASSET_LABEL,
+  fmtPrice, fmtNum, fmtPct, fmtDate, fmtAge, ageColor, totalColor, ASSET_LABEL,
 } from "@/lib/format";
 import { getFavorites, toggleFavorite } from "@/lib/favorites";
 import { rowsToCsv, downloadCsv } from "@/lib/csv";
-import { RatingBadge, RecommendationBadge, StrategyTag, RarityDots } from "./Badges";
+import {
+  RatingBadge, RecommendationBadge, StrategyTag, RarityDots,
+  BatteryBadge, TrendBadge, RiskDots,
+} from "./Badges";
 import SortHeader from "./SortHeader";
 
 interface Col {
   key: string;
   label: string;
-  title?: string;            // Tooltip (für abgekürzte Header)
+  title?: string;
   align?: "left" | "right" | "center";
   sort?: SortBy;
   defaultOn: boolean;
@@ -30,7 +32,7 @@ const COLS: Col[] = [
     render: (r) => r.country ?? "—" },
   { key: "asset_class", label: "Klasse", align: "left", defaultOn: false,
     render: (r) => ASSET_LABEL[r.asset_class ?? ""] ?? r.asset_class ?? "—" },
-  { key: "price", label: "Preis", align: "right", sort: "price", defaultOn: true,
+  { key: "price", label: "Kurs", align: "right", sort: "price", defaultOn: true,
     render: (r) => <span className="font-mono tabular-nums">{fmtPrice(r.price, r.currency)}</span> },
   { key: "dividend_yield", label: "Dividende", align: "right", sort: "dividend_yield", defaultOn: false,
     render: (r) => <span className="font-mono tabular-nums">{fmtPct(r.dividend_yield)}</span> },
@@ -38,50 +40,50 @@ const COLS: Col[] = [
     render: (r) => <span className={`font-mono text-base font-bold tabular-nums ${totalColor(r.total_score)}`}>{r.total_score ?? "—"}</span> },
   { key: "rating", label: "Rating", align: "center", sort: "rating", defaultOn: true,
     render: (r) => <RecommendationBadge rating={r.rating} /> },
-  { key: "wlatar", label: "Technik", title: "WLATAR – Technisches Rating (0–10)", align: "center", sort: "wlatar", defaultOn: true,
-    render: (r) => <RatingBadge value={r.wlatar} /> },
-  { key: "wlafar", label: "Fundament", title: "WLAFAR – Fundamentales Rating (0–10)", align: "center", sort: "wlafar", defaultOn: true,
-    render: (r) => <RatingBadge value={r.wlafar} /> },
-  { key: "trend", label: "Trend L/M", title: "Langfristiger / mittelfristiger Trend", align: "center", defaultOn: true,
-    render: (r) => (
-      <span className="font-mono text-xs">
-        <span className={trendClass(r.trend_long)}>{trendArrow(r.trend_long)}</span>
-        <span className="mx-1 text-edge">/</span>
-        <span className={trendClass(r.trend_medium)}>{trendArrow(r.trend_medium)}</span>
-      </span>
-    ) },
+  { key: "wlatar", label: "WLATAR", title: "WLATAR – Technisches Rating (0–10)", align: "center", sort: "wlatar", defaultOn: true,
+    render: (r) => <BatteryBadge value={r.wlatar} /> },
+  { key: "wlafar", label: "WLAFAR", title: "WLAFAR – Fundamentales Rating (0–10)", align: "center", sort: "wlafar", defaultOn: true,
+    render: (r) => <BatteryBadge value={r.wlafar} /> },
+  { key: "trend_long", label: "Langfr. Trend", align: "center", defaultOn: true,
+    render: (r) => <TrendBadge trend={r.trend_long} /> },
+  { key: "trend_medium", label: "Mittelfr. Trend", align: "center", defaultOn: true,
+    render: (r) => <TrendBadge trend={r.trend_medium} /> },
   { key: "status", label: "Status", align: "left", sort: "status", defaultOn: true,
     render: (r) => <span className="text-slate-300">{r.status ?? "—"}</span> },
-  { key: "risikoklasse", label: "Risiko", align: "left", sort: "risk_class", defaultOn: true,
-    render: (r) => <span className={`font-medium ${riskColor(r.risikoklasse)}`}>{r.risikoklasse ?? "—"}</span> },
+  { key: "risikoklasse", label: "Risiko", title: "Risikoklasse (sehr niedrig – sehr hoch)", align: "center", sort: "risk_class", defaultOn: true,
+    render: (r) => <RiskDots risk={r.risikoklasse} /> },
   { key: "strategy", label: "Strategie", align: "left", sort: "strategy", defaultOn: true,
     render: (r) => <StrategyTag tag={r.strategy_tag} /> },
-  { key: "chance", label: "Chance", title: "Chance-Bewertung (0–10)", align: "center", defaultOn: true,
+  { key: "chance", label: "Chance", title: "Chance-Bewertung (Seltenheit des Setups)", align: "center", sort: "chance_dots", defaultOn: true,
     render: (r) => <RarityDots rarity={r.chance_rarity} /> },
   { key: "rarity", label: "Seltenheit", align: "left", defaultOn: false,
     render: (r) => <span className="text-muted">{r.chance_rarity ?? "—"}</span> },
-  { key: "signal_aggr", label: "Signal", align: "right", defaultOn: false,
-    render: (r) => <span className="font-mono tabular-nums text-accent">{fmtNum(r.targets.signal_aggr)}</span> },
+  { key: "signal_aggr", label: "Signal (aggr.)", title: "Aggressives Einstiegssignal", align: "right", defaultOn: false,
+    render: (r) => <span className="font-mono tabular-nums text-accent">{fmtPrice(r.targets.signal_aggr, r.currency)}</span> },
+  { key: "signal_kons", label: "Signal (kons.)", title: "Konservatives Einstiegssignal", align: "right", defaultOn: false,
+    render: (r) => <span className="font-mono tabular-nums text-accent">{fmtPrice(r.targets.signal_kons, r.currency)}</span> },
   { key: "target_1", label: "Kursziel 1", align: "right", defaultOn: false,
-    render: (r) => <span className="font-mono tabular-nums text-bull">{fmtNum(r.targets.target_1)}</span> },
+    render: (r) => <span className="font-mono tabular-nums text-bull">{fmtPrice(r.targets.target_1, r.currency)}</span> },
   { key: "target_2", label: "Kursziel 2", align: "right", defaultOn: false,
-    render: (r) => <span className="font-mono tabular-nums text-bull">{fmtNum(r.targets.target_2)}</span> },
+    render: (r) => <span className="font-mono tabular-nums text-bull">{fmtPrice(r.targets.target_2, r.currency)}</span> },
   { key: "crv", label: "CRV", title: "Chance-Risiko-Verhältnis", align: "right", defaultOn: false,
     render: (r) => <span className="font-mono tabular-nums">{fmtNum(r.targets.crv)}</span> },
   { key: "forecast_return", label: "Prognose", title: "Erwartete Rendite bis Prognose-Ende", align: "right", defaultOn: false,
     render: (r) => {
       const v = r.targets.forecast_return;
-      return v == null ? <span className="text-muted">—</span>
+      return v == null
+        ? <span className="text-muted">—</span>
         : <span className={`font-mono tabular-nums ${v >= 0 ? "text-bull" : "text-bear"}`}>
-            {v >= 0 ? "+" : ""}{(v * 100).toFixed(1)}%</span>;
+            {v >= 0 ? "+" : ""}{(v * 100).toFixed(1)}%
+          </span>;
     } },
-  { key: "data_as_of", label: "Stand", title: "Stand der Daten dieses Werts (Alter)", align: "right", sort: "data_as_of", defaultOn: true,
+  { key: "data_as_of", label: "Stand", title: "Alter der Daten dieses Werts", align: "right", sort: "data_as_of", defaultOn: true,
     render: (r) => <span className={ageColor(r.data_as_of)} title={fmtDate(r.data_as_of)}>{fmtAge(r.data_as_of)}</span> },
   { key: "updated_at", label: "Letzte Änd.", align: "right", sort: "updated_at", defaultOn: false,
     render: (r) => <span className="text-muted">{fmtDate(r.updated_at)}</span> },
 ];
 
-const COLS_KEY = "screener_columns_v2";
+const COLS_KEY = "screener_columns_v3";
 const DENSITY_KEY = "louichamp_density";
 
 function defaultVisible(): Record<string, boolean> {
@@ -142,7 +144,6 @@ export default function ScreenerBoard(
   };
 
   const exportCsv = () => {
-    // Exportiert die gesamte aktuell gefilterte Menge (nicht nur die Seite).
     const data = exportRows && exportRows.length ? exportRows : rows;
     downloadCsv(`louichamp_screener_${new Date().toISOString().slice(0, 10)}.csv`,
                 rowsToCsv(data));
@@ -185,7 +186,6 @@ export default function ScreenerBoard(
         </div>
       </div>
 
-      {/* Scroll-Container mit fixem Kopf -> ruckelfreies Scrollen bei großen Seiten. */}
       <div className="max-h-[74vh] animate-fadein overflow-auto rounded-lg border border-edge bg-panel">
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 z-10">
@@ -197,8 +197,7 @@ export default function ScreenerBoard(
               {shown.map((c) => (
                 <th key={c.key} className={`bg-panel2 px-3 py-2 ${alignCls(c.align)}`} title={c.title}>
                   {c.sort
-                    ? <SortHeader column={c.sort} label={c.label} align={c.align}
-                                  numeric={c.align === "right"} />
+                    ? <SortHeader column={c.sort} label={c.label} align={c.align} numeric={c.align === "right"} />
                     : <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{c.label}</span>}
                 </th>
               ))}
@@ -265,13 +264,13 @@ function ColumnMenu({
   visible, toggle,
 }: { visible: Record<string, boolean>; toggle: (k: string) => void }) {
   const items = [{ key: "ticker", label: "Ticker (unter Name)" },
-                 ...COLS.map((c) => ({ key: c.key, label: c.label }))];
+                 ...COLS.map((c) => ({ key: c.key, label: c.title ?? c.label }))];
   return (
     <details className="relative">
       <summary className="cursor-pointer list-none rounded border border-edge bg-panel2 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:border-accent">
         ⚙ Spalten
       </summary>
-      <div className="absolute right-0 z-20 mt-1 max-h-80 w-56 overflow-auto rounded-lg border border-edge bg-panel2 p-2 shadow-xl">
+      <div className="absolute right-0 z-20 mt-1 max-h-80 w-60 overflow-auto rounded-lg border border-edge bg-panel2 p-2 shadow-xl">
         {items.map((it) => (
           <label key={it.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm transition-colors hover:bg-panel">
             <input type="checkbox" checked={!!visible[it.key]} onChange={() => toggle(it.key)}

@@ -18,7 +18,12 @@ export default function ScreenerApp() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadScreenerData().then(setData).catch((e) => setError(String(e)));
+    loadScreenerData()
+  .then(setData)
+  .catch((e) => {
+    console.error("loadScreenerData failed:", e);
+    setError(String(e));
+  });
   }, []);
 
   const query: ScreenerQuery = useMemo(() => queryFromParams(params), [params]);

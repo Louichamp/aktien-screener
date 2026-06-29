@@ -29,11 +29,16 @@ export default async (request) => {
   const url = new URL(request.url);
   const path = url.pathname;
 
-  // Login-Seite und Login-API immer durchlassen (sonst Endlos-Redirect).
+  // Nur HTML-Seiten schützen. Statische Assets immer durchlassen:
+  // /_next/ enthält JS-Bundles/CSS, /data/ enthält screener.json u.a.
   if (
     path === "/login" ||
     path === "/login/" ||
-    path.startsWith("/api/login")
+    path.startsWith("/api/login") ||
+    path.startsWith("/_next/") ||
+    path === "/favicon.ico" ||
+    path.startsWith("/data/") ||
+    path.endsWith(".json")
   ) {
     return;
   }

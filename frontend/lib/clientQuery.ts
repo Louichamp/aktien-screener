@@ -24,6 +24,7 @@ const SORT_ACCESS: Record<SortBy, (r: ScreenerRow) => string | number | null> = 
   risk_class: (r) => r.risikoklasse,
   data_as_of: (r) => r.data_as_of,
   updated_at: (r) => r.updated_at,
+  chance_dots: (r) => r.targets.chance_dots,
 };
 
 export function applyFilters(items: ScreenerRow[], q: ScreenerQuery): ScreenerRow[] {
@@ -49,6 +50,11 @@ export function applyFilters(items: ScreenerRow[], q: ScreenerQuery): ScreenerRo
     if (q.min_dividend_yield != null && (r.dividend_yield ?? -1) < q.min_dividend_yield) return false;
     if (maxRisk != null && (RISK_LEVEL[r.risikoklasse ?? ""] ?? 99) > maxRisk) return false;
     if (tickers && !tickers.has(r.ticker)) return false;
+    if (q.rare_only) {
+      const rarity = r.chance_rarity ?? "";
+      if (rarity !== "selten" && rarity !== "sehr selten") return false;
+      if (r.rating !== "KAUFEN" && r.rating !== "STARK KAUFEN") return false;
+    }
     return true;
   });
 }
@@ -89,9 +95,11 @@ export function computeSummary(filtered: ScreenerRow[]): Summary {
 export function queryFromParams(p: URLSearchParams): ScreenerQuery {
   const numKeys = new Set(["min_total_score", "min_dividend_yield", "max_risk_level",
     "min_wlatar", "min_wlafar", "limit", "offset"]);
+  const boolKeys = new Set(["rare_only"]);
   const q: Record<string, unknown> = {};
   p.forEach((v, k) => {
     if (v === "") return;
+    if (boolKeys.has(k)) { q[k] = v === "1" || v === "true"; return; }
     q[k] = numKeys.has(k) ? Number(v) : v;
   });
   return q as ScreenerQuery;
