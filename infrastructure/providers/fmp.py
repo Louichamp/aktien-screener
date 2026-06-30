@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from collections import deque
@@ -39,7 +40,8 @@ def _f(d: dict[str, Any], *keys: str) -> float | None:
         if v is None:
             continue
         try:
-            return float(v)
+            f = float(v)
+            return f if math.isfinite(f) else None  # NaN und Infinity raus
         except (TypeError, ValueError):
             continue
     return None
