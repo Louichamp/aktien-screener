@@ -58,9 +58,13 @@ class ScoringContext:
     nur lesend über `peers()` und `percentile()` zu.
     """
 
-    def __init__(self, instruments: list[InstrumentData], min_peers: int = 8) -> None:
+    def __init__(self, instruments: list[InstrumentData], min_peers: int = 8,
+                 shrink_k: float = 12.0) -> None:
         self.instruments = instruments
         self.min_peers = min_peers
+        # Empirical-Bayes-Shrinkage: Stärke, mit der dünne Peer-Gruppen zur
+        # neutralen Prior-Mitte (0.5) gezogen werden (größer = stärkere Dämpfung).
+        self.shrink_k = shrink_k
         self._by_industry: dict[str, list[InstrumentData]] = defaultdict(list)
         self._by_sector: dict[str, list[InstrumentData]] = defaultdict(list)
         for d in instruments:
@@ -91,15 +95,24 @@ class ScoringContext:
         invert=True für 'kleiner ist besser' (z. B. Bewertungsmultiplikatoren).
         Liefert immer den tatsächlich verwendeten `scope` mit zurück, damit
         Computor ehrliche Driver bauen können (Transparenz bei Fallback).
+
+        Auf das Roh-Perzentil wird eine Empirical-Bayes-Shrinkage gegen 0.5
+        angewandt: bei wenigen Peers ist ein Extremwert (z. B. „Platz 1 von 3")
+        statistisch unzuverlässig und wird zur neutralen Mitte gezogen
+        (shrunk = 0.5 + (p − 0.5)·n/(n+k)). Bei großen n bleibt p praktisch
+        unverändert. Das verhindert, dass dünne Branchen extreme Scores erzeugen.
         """
         peers, used = self.peers(data, scope)
         own = extractor(data)
         if own is None:
             return PeerStat(None, used, 0)
         vals = [v for v in (extractor(p) for p in peers) if v is not None]
-        if len(vals) < 2:
-            return PeerStat(None, used, len(vals))
+        n = len(vals)
+        if n < 2:
+            return PeerStat(None, used, n)
         below = sum(1 for v in vals if v < own)
         equal = sum(1 for v in vals if v == own)
-        pct = (below + 0.5 * equal) / len(vals)
-        return PeerStat((1.0 - pct) if invert else pct, used, len(vals))
+        pct = (below + 0.5 * equal) / n
+        final = (1.0 - pct) if invert else pct
+        shrunk = 0.5 + (final - 0.5) * n / (n + self.shrink_k)
+        return PeerStat(shrunk, used, n)

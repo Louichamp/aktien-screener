@@ -248,6 +248,113 @@ def structure_counts(candles: list[Candle], lookback: int = 20) -> dict[str, int
     return {"hh": hh, "hl": hl, "lh": lh, "ll": ll}
 
 
+# ── Statistische Robustheits-Helfer ───────────────────────────────────────────
+
+def log_returns(closes: list[float]) -> list[float]:
+    """Tägliche Log-Renditen r_t = ln(P_t / P_{t-1}); überspringt nicht-positive Kurse."""
+    out: list[float] = []
+    for i in range(1, len(closes)):
+        p0, p1 = closes[i - 1], closes[i]
+        if p0 > 0 and p1 > 0:
+            out.append(math.log(p1 / p0))
+    return out
+
+
+def winsorize(values: list[float], cap: float = 0.25) -> list[float]:
+    """Begrenzt Ausreißer auf ±cap (Default ±25 % Tagesrendite).
+
+    Einzelne fehlerhafte Ticks/nicht-adjustierte Splits verzerren Varianz- und
+    Drift-Schätzer massiv. Winsorizing (statt Entfernen) erhält die Stichprobengröße
+    und macht σ/μ robust, ohne echte (gedeckelte) Bewegungen ganz zu verwerfen.
+    """
+    return [max(-cap, min(cap, v)) for v in values]
+
+
+def efficiency_ratio(closes: list[float], period: int = 20) -> float | None:
+    """Kaufman Efficiency Ratio (0..1): Netto-Bewegung / Summe der Absolutschritte.
+
+    1.0 = perfekt gerichteter (sauberer) Trend, ~0 = reines Zickzack. Misst die
+    QUALITÄT einer Bewegung unabhängig von ihrer Richtung — ein robustes,
+    O(period)-Maß zur Unterscheidung tragfähiger Trends von Rauschen.
+    """
+    if len(closes) < period + 1:
+        return None
+    seg = closes[-(period + 1):]
+    net = abs(seg[-1] - seg[0])
+    path = sum(abs(seg[i] - seg[i - 1]) for i in range(1, len(seg)))
+    if path <= 0:
+        return None
+    return net / path
+
+
+def trend_r2(closes: list[float], period: int = 63) -> float | None:
+    """Bestimmtheitsmaß R² einer linearen Regression von ln(Kurs) gegen die Zeit.
+
+    Misst die Persistenz/Geradlinigkeit des Trends: R²≈1 = stetiger Auf-/Abtrend,
+    R²≈0 = richtungsloses Rauschen. Auf Log-Kurse angewendet, weil ein Trend in
+    der Rendite-Welt exponentiell ist. Robust und in O(period) berechenbar.
+    """
+    if len(closes) < period:
+        return None
+    seg = closes[-period:]
+    ys = [math.log(p) for p in seg if p > 0]
+    if len(ys) < period:
+        return None
+    n = len(ys)
+    xs = list(range(n))
+    mx = (n - 1) / 2.0
+    my = sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    if sxx <= 0 or syy <= 0:
+        return None
+    sxy = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    return (sxy * sxy) / (sxx * syy)          # = Pearson r²
+
+
+def max_drawdown(closes: list[float], period: int = 126) -> float | None:
+    """Maximaler Peak-to-Trough-Verlust (0..1) im Fenster — Tail-Risiko-Maß.
+
+    Erfasst das tatsächlich erlittene Abwärtsrisiko deutlich besser als die
+    symmetrische ATR/Vola, weil es Pfadabhängigkeit (Crash-Tiefe) abbildet.
+    """
+    if len(closes) < 2:
+        return None
+    seg = closes[-period:] if len(closes) >= period else closes
+    peak = seg[0]
+    mdd = 0.0
+    for p in seg:
+        if p > peak:
+            peak = p
+        if peak > 0:
+            mdd = max(mdd, (peak - p) / peak)
+    return mdd
+
+
+def downside_deviation(rets: list[float], mar: float = 0.0,
+                       periods_per_year: int = 252) -> float | None:
+    """Annualisierte Downside-Deviation (Sortino-Nenner): nur negative Abweichungen.
+
+    σ_d = sqrt( mean( min(r - MAR, 0)² ) ) · sqrt(252). Bestraft — anders als die
+    symmetrische Standardabweichung — ausschließlich Verlustvolatilität, was dem
+    realen Risikoempfinden und institutioneller Risikomessung entspricht.
+    """
+    if len(rets) < 2:
+        return None
+    downs = [min(r - mar, 0.0) ** 2 for r in rets]
+    daily = math.sqrt(sum(downs) / len(downs))
+    return daily * math.sqrt(periods_per_year)
+
+
+def realized_volatility(rets: list[float], periods_per_year: int = 252) -> float | None:
+    """Annualisierte realisierte Volatilität aus (winsorisierten) Log-Renditen."""
+    if len(rets) < 2:
+        return None
+    mu = sum(rets) / len(rets)
+    var = sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)
+    return math.sqrt(max(var, 0.0)) * math.sqrt(periods_per_year)
+
+
 # ── Haupt-Funktion ────────────────────────────────────────────────────────────
 
 def technicals_from_candles(candles: list[Candle], *, price: float) -> dict[str, float]:
@@ -360,5 +467,30 @@ def technicals_from_candles(candles: list[Candle], *, price: float) -> dict[str,
     t["hl_count"] = float(struct["hl"])
     t["lh_count"] = float(struct["lh"])
     t["ll_count"] = float(struct["ll"])
+
+    # ── Trend-Qualität: Efficiency Ratio + Regressions-R² ───────────────
+    er = efficiency_ratio(closes, 20)
+    if er is not None:
+        t["efficiency_ratio"] = er
+    r2 = trend_r2(closes, 63)
+    if r2 is not None:
+        t["trend_r2"] = r2
+
+    # ── Risiko-Statistik: robuste (winsorisierte) Renditemomente ─────────
+    # Preis-Level-Indikatoren (EMA/ATR/BB) laufen auf Rohkursen; die
+    # statistischen Momente nutzen winsorisierte Log-Renditen, damit ein
+    # einzelner Fehl-Tick Vola/Drawdown/Forecast nicht verzerrt.
+    rets = log_returns(closes)
+    if len(rets) >= 20:
+        wr = winsorize(rets[-252:])           # bis zu 1 Jahr, ausreißerrobust
+        dd = downside_deviation(wr)
+        if dd is not None:
+            t["downside_dev"] = dd
+        rv = realized_volatility(wr)
+        if rv is not None:
+            t["realized_vol"] = rv
+    mdd = max_drawdown(closes, 126)
+    if mdd is not None:
+        t["max_drawdown"] = mdd
 
     return t
