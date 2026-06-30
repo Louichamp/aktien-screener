@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -29,9 +30,29 @@ from api.queries import ScreenerFilters, query_facets, query_screener_rows
 from api.schemas import ScreenerRowDetailSchema, ScreenerRowSchema
 
 
+def _sanitize(obj):
+    """Ersetzt nicht-finite Floats (Infinity, -Infinity, NaN) rekursiv durch None.
+
+    Python's json.dumps schreibt diese Werte standardmäßig als JavaScript-Token
+    (Infinity, NaN), die gegen RFC 8259 verstoßen und im Browser einen SyntaxError
+    auslösen. Diese Funktion ist die letzte Verteidigungslinie vor dem Schreiben;
+    der eigentliche Fix liegt in den Provider-_f()-Funktionen.
+    """
+    if isinstance(obj, float):
+        return None if not math.isfinite(obj) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    return obj
+
+
 def _write_json(path: Path, data) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-                    encoding="utf-8")
+    clean = _sanitize(data)
+    # allow_nan=False lässt json.dumps mit ValueError scheitern, falls _sanitize
+    # doch einen Infinity/NaN-Wert übersehen hat — Fail-Fast statt stille Korruption.
+    text = json.dumps(clean, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    path.write_text(text, encoding="utf-8")
 
 
 async def main() -> None:
@@ -68,10 +89,17 @@ async def main() -> None:
         raise SystemExit(1)
 
     items = [ScreenerRowSchema.model_validate(r).model_dump(mode="json") for r in rows]
-    _write_json(out / "screener.json", {
+    screener_path = out / "screener.json"
+    _write_json(screener_path, {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "total": total, "items": items, "facets": facets,
     })
+    # Automatische Validierung: bricht den Build ab, bevor korrupte Dateien deployt werden.
+    try:
+        json.loads(screener_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"FEHLER: screener.json enthält ungültiges JSON: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     # Alte Detail-Dateien aufräumen, dann frisch schreiben.
     for old in detail_dir.glob("*.json"):

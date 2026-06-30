@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from typing import Any
 
@@ -32,7 +33,7 @@ def _f(v: Any) -> float | None:
         if v is None:
             return None
         f = float(v)
-        return f if f == f else None          # NaN raus
+        return f if math.isfinite(f) else None  # NaN und Infinity raus
     except (TypeError, ValueError):
         return None
 
