@@ -20,11 +20,17 @@ class MarketLeadershipComputor(BaseComputor):
     family = "trend_leadership"
 
     # (Metrik, Gewicht, kleiner_ist_besser)
+    # De-Korrelation: ret_3m treibt bereits rel_strength (.50) und momentum.
+    # Mit 0.40 wäre Leadership ein dritter Momentum-Proxy (Dreifachverbuchung der
+    # Trailing-Rendite). Das Gewicht ist daher zugunsten der FUNDAMENTALEN
+    # Dominanz (ROIC, Marge, Skalengröße) reduziert — exakt die „fundamentale
+    # Führerschaft", die der Score laut Design messen soll, und weitgehend
+    # orthogonal zum Momentum-Cluster.
     FACTORS = (
-        ("ret_3m", 0.40, False),       # Performance-Führerschaft in der Branche
-        ("roic", 0.25, False),         # Kapitalrendite-Dominanz
-        ("net_margin", 0.20, False),   # Margen-Dominanz
-        ("market_cap", 0.15, False),   # Größen-/Skalen-Führerschaft
+        ("ret_3m", 0.25, False),       # Performance-Führerschaft (entkoppelt von rel_strength)
+        ("roic", 0.30, False),         # Kapitalrendite-Dominanz
+        ("net_margin", 0.25, False),   # Margen-Dominanz
+        ("market_cap", 0.20, False),   # Größen-/Skalen-Führerschaft
     )
 
     def compute(self, data: InstrumentData, ctx: ScoringContext) -> ScoreResult:

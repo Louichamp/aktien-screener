@@ -49,6 +49,15 @@ class BaseComputor(ABC):
         return ScoreResult(self.slug, score, state, drivers or [], raw)
 
     def missing(self, reason: str) -> ScoreResult:
-        """Neutrales Ergebnis bei fehlenden Eingangsdaten (kein Fehler)."""
+        """Ergebnis bei fehlenden Eingangsdaten (kein Berechnungsfehler).
+
+        `ok=False`, damit `compose()` den Sub-Score AUSLÄSST und die Gewichte
+        über die tatsächlich vorhandenen Signale renormiert — statt einen
+        neutralen 5.0 zu imputieren. Mean-Imputation würde die Querschnitts-
+        Varianz dämpfen und unvollständige Titel systematisch zur Median-Mitte
+        ziehen (Rang-Bias). status.py/_sub und strategies.py/sub behandeln
+        `ok=False` bereits als „Signal fehlt", die Engine ist damit konsistent.
+        """
         return ScoreResult(self.slug, 5.0, "Daten unvollständig",
-                           [self.neu("missing_data", reason)], {"missing": True})
+                           [self.neu("missing_data", reason)], {"missing": True},
+                           ok=False)
