@@ -29,7 +29,7 @@ class ForecastComputor(BaseComputor):
         mean_path = fc.get("mean_path") or []
         upper_band = fc.get("upper_band") or []
         lower_band = fc.get("lower_band") or []
-        price = data.metric("price") or (mean_path[0] if mean_path else None)
+        price = data.metric("close") or data.metric("price") or (mean_path[0] if mean_path else None)
 
         if not mean_path or price is None or price <= 0:
             return self.missing("Forecast unvollständig")
@@ -37,12 +37,18 @@ class ForecastComputor(BaseComputor):
         target = mean_path[-1]
         expected_return = (target / price) - 1.0   # annualisierungsfreie Erwartungsrendite
 
-        # Konfidenz aus Bandbreite: schmales Band = geringe Unsicherheit
-        if upper_band and lower_band and len(upper_band) == len(lower_band):
+        # Konfidenz: bevorzugt die vom Modell gelieferte (Vola × Stichprobe ×
+        # Drift-Signifikanz). Fällt sonst auf die Bandbreite zurück (schmales
+        # Band = geringe Unsicherheit). So bleibt der Score abwärtskompatibel.
+        band_width = None
+        model_conf = fc.get("confidence")
+        if model_conf is not None:
+            confidence = max(0.0, min(1.0, float(model_conf)))
+        elif upper_band and lower_band and len(upper_band) == len(lower_band):
             band_width = (upper_band[-1] - lower_band[-1]) / price
             confidence = max(0.0, 1.0 - band_width / self._MAX_BAND_WIDTH)
         else:
-            confidence = 0.5  # keine Bandinformation → neutrale Konfidenz
+            confidence = 0.5  # keine Information → neutrale Konfidenz
 
         # Basis-Score aus erwarteter Rendite (0..10 Skala)
         ret_score = band(expected_return, [

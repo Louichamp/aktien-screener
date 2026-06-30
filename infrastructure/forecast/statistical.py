@@ -47,25 +47,49 @@ class StatisticalForecaster:
     async def aclose(self) -> None:
         return None
 
-    def _estimate(self, closes: list[float]) -> tuple[float, float]:
+    def _estimate(self, closes: list[float]) -> tuple[float, float, float]:
+        """Robuste Schätzung von Drift μ, Volatilität σ und Modell-Konfidenz.
+
+        Drei Robustheitsstufen gegenüber der naiven Mittelwert-Drift:
+          1. Winsorizing der Log-Renditen (±25 %) → ein Fehl-Tick/nicht-adjustierter
+             Split sprengt weder σ noch μ.
+          2. Drift-Signifikanz-Shrinkage: μ wird nur extrapoliert, soweit es
+             statistisch von Null unterscheidbar ist (t = μ·√n/σ). Faktor
+             t²/(t²+1) → bei insignifikanter Drift projiziert das Modell ~flach
+             statt Rauschen in die Zukunft zu verlängern (institutionelle Praxis).
+          3. Konfidenz aus Vola-Niveau × Stichprobengröße.
+        """
         rets = [math.log(closes[i] / closes[i - 1])
                 for i in range(1, len(closes))
                 if closes[i] > 0 and closes[i - 1] > 0]
         rets = rets[-self.lookback:]
-        if len(rets) < 2:
-            return 0.0, 0.01
-        mu = sum(rets) / len(rets)
-        var = sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)
+        n = len(rets)
+        if n < 2:
+            return 0.0, 0.01, 0.0
+        rets = [max(-0.25, min(0.25, r)) for r in rets]        # Winsorizing
+        mu = sum(rets) / n
+        var = sum((r - mu) ** 2 for r in rets) / (n - 1)
         sigma = math.sqrt(max(var, 1e-9))
+
+        # Drift-Signifikanz (t-Statistik des Mittelwerts) → Shrinkage gegen 0.
+        se = sigma / math.sqrt(n)
+        t = abs(mu) / se if se > 0 else 0.0
+        mu *= t * t / (t * t + 1.0)
         mu = max(-self.max_daily_drift, min(self.max_daily_drift, mu))
-        return mu, sigma
+
+        # Konfidenz: niedrige Jahresvola und große Stichprobe → vertrauenswürdiger.
+        sigma_ann = sigma * math.sqrt(252.0)
+        conf_vol = max(0.0, 1.0 - min(sigma_ann / 0.80, 1.0))
+        conf_n = n / (n + 30.0)
+        confidence = conf_vol * conf_n
+        return mu, sigma, confidence
 
     async def forecast(self, snap: MarketSnapshot, *, horizon: int | None = None) -> dict[str, Any]:
         h = horizon or self.horizon
         closes = [c.c for c in snap.candles if c.c and c.c > 0]
         if len(closes) < 20:
             return {}
-        mu, sigma = self._estimate(closes)
+        mu, sigma, confidence = self._estimate(closes)
         s0 = snap.price or closes[-1]
         ts = _business_days(h)
         mean_path, upper, lower = [], [], []
@@ -81,5 +105,6 @@ class StatisticalForecaster:
             "upper_band": upper,
             "lower_band": lower,
             "direction": "up" if mean_path[-1] >= s0 else "down",
+            "confidence": round(confidence, 3),
             "method": "statistical",
         }
