@@ -40,7 +40,14 @@ class ScoreEngine:
                  composites: dict[str, dict[str, float]] | None = None,
                  min_peers: int = 8) -> None:
         self.computors = computors if computors is not None else get_computors()
-        self.composites = composites or DEFAULT_COMPOSITES
+        # Standard = handgesetzter Prior. Liegt eine freigegebene Offline-Kalibrierung
+        # vor (SIGNAL_IC_WEIGHTS=1 + data/signal_ic.json), werden stattdessen die
+        # empirisch (IC-)hergeleiteten technical_rating-Gewichte genutzt. Ohne
+        # Freigabe/Datei ist dies ein No-Op (siehe validation.apply).
+        if composites is None:
+            from .validation.apply import calibrated_composites
+            composites = calibrated_composites(DEFAULT_COMPOSITES)
+        self.composites = composites
         self.min_peers = min_peers
 
     def score_instrument(self, data: InstrumentData, ctx: ScoringContext) -> ScoredInstrument:

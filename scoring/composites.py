@@ -8,17 +8,25 @@ from __future__ import annotations
 
 from .domain import ScoreResult
 
+# De-Korrelations-Hinweis: `volume` und `institutional_demand` teilen sich ~2/3
+# ihrer Eingaben (up_vol_ratio + obv_slope). Als zwei volle Composite-Posten
+# würde der Volumen-Fluss-Faktor doppelt verbucht (Multikollinearität → implizit
+# überhöhtes Gewicht). Daher trägt `institutional_demand` ein reduziertes Gewicht
+# (sein eigenständiger Informationsgehalt liegt in distribution_days); das frei
+# gewordene Gewicht geht an die strukturell ORTHOGONALEN Timing-Signale
+# `breakout`/`setup` (Volatilitäts-Kompression ist zur Trailing-Rendite eher
+# unkorreliert) — höhere effektive Diversifikation bei gleicher Gewichtssumme.
 DEFAULT_COMPOSITES: dict[str, dict[str, float]] = {
     "technical_rating": {
         "trend": .18, "rel_strength": .16, "market_leadership": .12, "momentum": .16,
-        "volume": .08, "institutional_demand": .10, "breakout": .10, "setup": .10,
+        "volume": .08, "institutional_demand": .06, "breakout": .12, "setup": .12,
     },
     "fundamental_rating": {
         "fund_quality": .45, "growth": .35, "valuation": .20,
     },
     "total_baseline": {
         "trend": .09, "rel_strength": .08, "market_leadership": .07, "momentum": .10,
-        "volume": .04, "institutional_demand": .05, "breakout": .05, "setup": .05,
+        "volume": .04, "institutional_demand": .03, "breakout": .06, "setup": .06,
         "fund_quality": .14, "growth": .12, "valuation": .08, "kronos": .06, "risk": .07,
     },
 }

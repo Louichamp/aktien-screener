@@ -72,10 +72,20 @@ def _crv_score(crv: float | None) -> float | None:
     return pts[-1][1]
 
 
+def _sub_score(sc: Any, slug: str) -> float | None:
+    """Sub-Score nur, wenn vorhanden UND fehlerfrei (ok). Fehlende Signale
+    werden aus der Chance-Mischung ausgelassen (num/den renormiert), statt mit
+    einem Phantom-5.0 einzufließen — konsistent zur compose()/missing()-Logik."""
+    r = sc.results.get(slug)
+    if r is None or not getattr(r, "ok", True):
+        return None
+    return getattr(r, "score", None)
+
+
 def _compute_chance(inp: ClassifierInput, status: str) -> float:
     sc, plan = inp.scored, inp.plan
-    setup = (lambda r: getattr(r, "score", None) if r else None)(sc.results.get("setup"))
-    kronos = (lambda r: getattr(r, "score", None) if r else None)(sc.results.get("kronos"))
+    setup = _sub_score(sc, "setup")
+    kronos = _sub_score(sc, "kronos")
     terms = [(0.30, setup), (0.25, _crv_score(plan.crv)),
              (0.25, sc.technical_rating), (0.20, kronos)]
     num = den = 0.0
