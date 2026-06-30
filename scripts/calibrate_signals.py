@@ -213,7 +213,8 @@ async def main() -> None:
     args = ap.parse_args()
 
     from infrastructure.providers import build_universe
-    universe = build_universe(source="broad")[: args.sample]
+    universe = await build_universe(source="broad")
+    universe = universe[: args.sample]
     horizons = [int(h) for h in args.horizons.split(",")]
 
     print(f"Hole Kerzen für {len(universe)} Titel (Period {args.period}) …", file=sys.stderr)
