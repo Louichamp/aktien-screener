@@ -181,18 +181,25 @@ def _forecast_return(forecast: dict[str, Any] | None, price: float | None) -> fl
     return round(float(mean[-1]) / price - 1.0, 4)
 
 
+# Obergrenze für die je Titel gespeicherten Konfluenzzonen (JSONB-Storage-Deckel,
+# siehe Timescale-Free-Tier-Kostenschätzung). Zonen sind schon nach Stärke
+# sortiert -> Kappen verliert nur die schwächsten/am wenigsten relevanten.
+_MAX_ZONES = 15
+
+
 def _build_drivers(scored: Any, plan: Any, cls: Classification) -> dict[str, Any]:
     entry = getattr(plan, "entry_zone", None)
+    ranked = sorted(plan.zones, key=lambda z: z.strength, reverse=True)
+    top = ranked[:_MAX_ZONES]
+    if entry is not None and entry not in top:      # Einstiegszone nie kappen
+        top = top[:-1] + [entry] if top else [entry]
     return {
         "bull": [_driver_dict(d) for d in scored.bull_case(5)],
         "bear": [_driver_dict(d) for d in scored.bear_case(5)],
         "rationale": list(plan.rationale),
         "status_note": cls.note,
         # Konfluenzzonen für das Tearsheet (stärkste zuerst), Einstiegszone markiert.
-        "zones": [
-            _zone_dict(z, is_entry=(entry is not None and z is entry))
-            for z in sorted(plan.zones, key=lambda z: z.strength, reverse=True)
-        ],
+        "zones": [_zone_dict(z, is_entry=(entry is not None and z is entry)) for z in top],
     }
 
 

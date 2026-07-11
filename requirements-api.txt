@@ -1,0 +1,13 @@
+# Render-Deployment: NUR die Lese-Schicht (api/main.py). Bewusst getrennt von
+# requirements.txt (das komplette Repo inkl. Batch-Pipeline, yfinance, torch für
+# den Forecast-Worker) — api/ importiert nachweislich nichts davon auf
+# Modulebene (geprüft: nur fastapi/sqlalchemy/pydantic + infrastructure.database).
+# Ohne diese Trennung würde der 512MB-RAM-Free-Dyno an torch (>2GB) ersticken
+# und der Render-Build unnötig lange dauern.
+
+fastapi>=0.137
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0
+pydantic>=2.11
+asyncpg>=0.29
+httpx>=0.28

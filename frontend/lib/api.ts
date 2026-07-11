@@ -35,6 +35,7 @@ function buildQuery(q: ScreenerQuery): string {
   set("min_dividend_yield", q.min_dividend_yield);
   set("max_risk_level", q.max_risk_level);
   set("tickers", q.tickers);
+  if (q.rare_only) sp.set("rare_only", "true");
   set("sort_by", q.sort_by);
   set("sort_dir", q.sort_dir);
   sp.set("limit", String(q.limit ?? 25));

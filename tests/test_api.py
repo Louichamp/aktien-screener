@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from api.main import create_app                                   # noqa: E402
 from api.queries import query_screener_rows                        # noqa: E402
-from infrastructure import worker                                  # noqa: E402
 from infrastructure.database.config import (create_engine,         # noqa: E402
                                             create_session_factory, init_models)
 from infrastructure.database.models import ScreenerRowModel        # noqa: E402
@@ -32,7 +31,7 @@ from infrastructure.database.repository import (ScreenerRepository,  # noqa: E40
                                                 compute_total_score, rating_label)
 from api.queries import ScreenerFilters, query_facets                # noqa: E402
 from api.cache import TTLCache                                       # noqa: E402
-from screener.pipeline import MarketSnapshot                       # noqa: E402
+from screener.pipeline import MarketSnapshot, run_screener_pipeline  # noqa: E402
 from screener.zones import Candle                                  # noqa: E402
 
 pytestmark = pytest.mark.asyncio
@@ -312,19 +311,6 @@ class FakeKronos:
         return make_kronos_forecast(snap.price, horizon)
 
 
-class FlakyKronos(FakeKronos):
-    """Schlägt die ersten `fail_times` Aufrufe fehl (Timeout), dann Erfolg."""
-    def __init__(self, fail_times: int) -> None:
-        super().__init__()
-        self.fail_times = fail_times
-
-    async def forecast(self, snap: MarketSnapshot, *, horizon: int) -> dict:
-        self.calls += 1
-        if self.calls <= self.fail_times:
-            raise asyncio.TimeoutError("simulierte GPU-/Netz-Verzögerung")
-        return make_kronos_forecast(snap.price, horizon)
-
-
 class DeadKronos(FakeKronos):
     """Schlägt dauerhaft fehl (z. B. GPU offline)."""
     async def forecast(self, snap: MarketSnapshot, *, horizon: int) -> dict:
@@ -344,22 +330,33 @@ async def fresh_db():
     tmp.cleanup()
 
 
-async def test_worker_chain_persists_wellformed_forecast_history(fresh_db):
-    """Volle Kette: forecast_snapshots -> compute_and_persist -> API-Auslieferung."""
+async def test_batch_chain_persists_wellformed_forecast_history(fresh_db):
+    """Volle Kette der Batch-Pipeline (compute_scores.py-Äquivalent):
+    apply_forecasts -> run_screener_pipeline -> API-Auslieferung.
+
+    Ersetzt den früheren arq-Worker-Kettentest (forecast_snapshots/
+    compute_and_persist) — der arq-Worker wurde als Live-Prozess entfernt und
+    durch das Batch-Skript ersetzt; dieser Test prüft jetzt exakt den Pfad, den
+    compute_scores.py tatsächlich in Produktion durchläuft.
+    """
+    from infrastructure.forecast import apply_forecasts
+
     url, engine, sm = fresh_db
     ticker = "KRNS"
     snaps = {ticker: build_snapshot(ticker, price=120.0)}
 
-    # 1) forecast-Queue: Kronos-Inferenz an den Snapshot heften
+    # 1) Forecast anheften (fehlerisoliert, wie in compute_scores.py)
     fk = FakeKronos()
-    snaps = await worker.forecast_snapshots({"kronos": fk}, snaps)
-    assert fk.calls == 1
+    ok = await apply_forecasts(fk, snaps, horizon=HORIZON)
+    assert ok == 1
     assert len(snaps[ticker].forecast["mean_path"]) == HORIZON
 
-    # 2) compute-Queue: Engines + atomarer Write-Back (ein commit)
+    # 2) Pipeline + atomarer Write-Back (ein commit) — direkt, kein Worker-Wrapper
     repo = ScreenerRepository(engine)
-    res = await worker.compute_and_persist({"session_factory": sm, "repository": repo}, snaps)
-    assert res["processed"] == 1, f"Pipeline-Fehler: {res}"
+    async with sm() as session:
+        res = await run_screener_pipeline(list(snaps), session, repository=repo,
+                                          snapshots=snaps, commit=True)
+    assert res.processed == 1, f"Pipeline-Fehler: {res.errors}"
 
     # 3) Auslieferung über den FastAPI-TestClient
     app = create_app(url)
@@ -384,37 +381,32 @@ async def test_worker_chain_persists_wellformed_forecast_history(fresh_db):
     assert (hist[-1]["upper"] - hist[-1]["lower"]) > (hist[0]["upper"] - hist[0]["lower"])
 
 
-async def test_forecast_retry_recovers_after_timeouts(fresh_db, monkeypatch):
-    """Resilienz: zwei Timeouts, dann Erfolg — der Snapshot bekommt seinen Forecast."""
-    monkeypatch.setattr(worker, "FORECAST_BACKOFF", 0.001)   # Test schnell halten
-    monkeypatch.setattr(worker, "FORECAST_ATTEMPTS", 3)
-    snaps = {"FLAK": build_snapshot("FLAK")}
-    flaky = FlakyKronos(fail_times=2)
+async def test_forecast_permanent_failure_degrades_without_blocking(fresh_db):
+    """Ein dauerhaft fallender Forecaster blockiert die Kette nie — Snapshot ohne Forecast.
 
-    snaps = await worker.forecast_snapshots({"kronos": flaky}, snaps)
+    Ersetzt den früheren arq-Retry-Test: apply_forecasts() (compute_scores.py-Pfad)
+    hat KEIN Retry/Backoff mehr (das war arq-Worker-/Kronos-GPU-spezifisch und
+    entfällt mit dem torch-freien StatisticalForecaster, der deterministisch und
+    praktisch nie transient fehlschlägt) — aber die Fehlerisolierung pro Ticker
+    bleibt: ein permanent scheiternder Forecast darf den Lauf nie killen.
+    """
+    from infrastructure.forecast import apply_forecasts
 
-    assert flaky.calls == 3                                  # 2x Fehlschlag + 1x Erfolg
-    assert snaps["FLAK"].forecast is not None
-    assert len(snaps["FLAK"].forecast["mean_path"]) == HORIZON
-
-
-async def test_forecast_permanent_failure_degrades_without_blocking(fresh_db, monkeypatch):
-    """Ein dauerhaft fallender Kronos blockiert die Kette nie — Snapshot ohne Forecast."""
-    monkeypatch.setattr(worker, "FORECAST_BACKOFF", 0.001)
-    monkeypatch.setattr(worker, "FORECAST_ATTEMPTS", 3)
     url, engine, sm = fresh_db
     dead = DeadKronos()
     snaps = {"DEAD": build_snapshot("DEAD")}
 
-    # forecast_snapshots wirft NICHT, sondern degradiert (forecast=None)
-    snaps = await worker.forecast_snapshots({"kronos": dead}, snaps)
-    assert dead.calls == 3                                   # alle Versuche ausgeschöpft
+    ok = await apply_forecasts(dead, snaps, horizon=HORIZON)
+    assert ok == 0
+    assert dead.calls == 1                                   # kein Retry -> genau 1 Versuch
     assert snaps["DEAD"].forecast is None
 
-    # compute läuft trotzdem durch; forecast_history ist dann leer
+    # Pipeline läuft trotzdem durch; forecast_history ist dann leer
     repo = ScreenerRepository(engine)
-    res = await worker.compute_and_persist({"session_factory": sm, "repository": repo}, snaps)
-    assert res["processed"] == 1
+    async with sm() as session:
+        res = await run_screener_pipeline(list(snaps), session, repository=repo,
+                                          snapshots=snaps, commit=True)
+    assert res.processed == 1
 
     app = create_app(url)
     app.state.db_engine, app.state.sessionmaker = engine, sm
@@ -428,19 +420,6 @@ async def test_forecast_permanent_failure_degrades_without_blocking(fresh_db, mo
 # =========================================================================== #
 #  Härtung: Fehlerisolierung (Ingest/Provider), Indikatoren, Health, CORS
 # =========================================================================== #
-async def test_ingest_isolates_failing_ticker():
-    """Ein fehlschlagender Provider-Fetch kippt den Ingest-Batch nicht."""
-    class _OneBadProvider:
-        async def fetch(self, ticker: str):
-            if ticker == "BAD":
-                raise ConnectionError("simulierter Netzfehler")
-            return build_snapshot(ticker)
-
-    out = await worker.ingest_snapshots({"provider": _OneBadProvider()},
-                                        ["GOOD", "BAD", "ALSO"])
-    assert set(out) == {"GOOD", "ALSO"}            # BAD isoliert, Rest da
-
-
 async def test_fmp_fetch_returns_none_on_terminal_4xx():
     """Unbekannter Ticker (404 auf allen Endpoints) -> sauberes None, kein Crash."""
     from infrastructure.providers.fmp import FMPMarketDataProvider
@@ -545,7 +524,7 @@ async def test_news_without_provider_returns_note(app_and_db):
 
 
 async def test_batched_helper():
-    from infrastructure.worker import batched
+    from infrastructure.batching import batched
     assert batched([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
     assert batched([], 50) == []
     assert batched([1, 2, 3], 0) == [[1], [2], [3]]   # n<1 -> Größe 1
@@ -725,9 +704,10 @@ async def test_pipeline_persists_price_history_and_forecast(fresh_db):
     snap = build_snapshot("PHX", price=120.0)
     snap.forecast = await StatisticalForecaster(horizon=30).forecast(snap)
     repo = ScreenerRepository(engine)
-    res = await worker.compute_and_persist({"session_factory": sm, "repository": repo},
-                                           {"PHX": snap})
-    assert res["processed"] == 1
+    async with sm() as session:
+        res = await run_screener_pipeline(["PHX"], session, repository=repo,
+                                          snapshots={"PHX": snap}, commit=True)
+    assert res.processed == 1
 
     app = create_app(url)
     app.state.db_engine, app.state.sessionmaker = engine, sm
@@ -761,9 +741,10 @@ async def test_data_as_of_persists_and_serves(fresh_db):
     snap = build_snapshot("ASOF", price=50.0)
     snap.as_of = "2026-06-10T08:00:00+00:00"
     repo = ScreenerRepository(engine)
-    res = await worker.compute_and_persist({"session_factory": sm, "repository": repo},
-                                           {"ASOF": snap})
-    assert res["processed"] == 1
+    async with sm() as session:
+        res = await run_screener_pipeline(["ASOF"], session, repository=repo,
+                                          snapshots={"ASOF": snap}, commit=True)
+    assert res.processed == 1
 
     app = create_app(url)
     app.state.db_engine, app.state.sessionmaker = engine, sm

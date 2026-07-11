@@ -1,11 +1,16 @@
-name: Daily Screener Update
+name: Daily Screener Update (Netlify-Static-Pfad, DEAKTIVIERT)
+
+# STILLGELEGT: Das Frontend wurde auf die Live-API-Architektur (Vercel + Render
+# + Timescale Cloud) umgestellt — ScreenerApp.tsx/AssetView.tsx fetchen jetzt
+# immer live von NEXT_PUBLIC_API_BASE statt aus frontend/public/data/*.json.
+# `next build` erzeugt daher keinen validen frontend/out mehr; dieser Workflow
+# würde am Safety-Gate scheitern. Cron bewusst auskommentiert (nicht gelöscht —
+# reversibel per Revert), workflow_dispatch bleibt für manuellen Bedarf nutzbar.
+# Aktiver Pfad jetzt: .github/workflows/compute-scores.yml
 
 on:
-  schedule:
-    # Täglich 07:00 UTC (inkl. Wochenende) — rollierender Update-Zyklus:
-    # 1500 Stocks/Lauf × 7 Läufe/Woche deckt 5000er-Universum ~2× ab.
-    # Max. Datenalter: ceil(5250/1500) ≈ 4 Tage.
-    - cron: "0 7 * * *"
+  # schedule:
+  #   - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       refresh:

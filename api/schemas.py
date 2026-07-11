@@ -158,3 +158,7 @@ class SummaryResponse(BaseModel):
     total: int = 0
     avg_total_score: float | None = None
     by_rating: dict[str, int] = Field(default_factory=dict)
+    # Datenabdeckung (rollierender Batch-Sync): ältester/neuester data_as_of
+    # über die gefilterte Menge — zeigt die Frische des zuletzt berechneten Stands.
+    oldest_data_as_of: str | None = None
+    newest_data_as_of: str | None = None

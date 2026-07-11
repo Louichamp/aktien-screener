@@ -1,0 +1,79 @@
+name: Compute Scores (Live-API-Architektur)
+
+# Batch-Score-Berechnung für den Render+Vercel+Timescale-Pfad. Läuft NUR als
+# Cron (kein permanenter Prozess) und schreibt direkt in die produktive
+# Timescale-Cloud-Postgres-DB. Baut/deployed NICHTS Frontend-seitiges — Vercel
+# baut bei jedem Git-Push selbst (eigene Pipeline, eigenes Free-Tier-Budget).
+#
+# Getrennt von daily-update.yml (Netlify-Static-Pfad) — beide können parallel
+# existieren, solange beide Deployments gepflegt werden; siehe README für die
+# Entscheidung, welcher Pfad der aktive Produktions-Pfad ist.
+
+on:
+  schedule:
+    # 06:00 UTC täglich — wie gefordert. 1500 älteste Werte/Lauf deckt ein
+    # 5250er-Universum alle ~3-4 Tage komplett ab (siehe Kostenschätzung).
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: "Anzahl ältester Werte auffrischen ('all' = Komplett-Rebuild)"
+        required: false
+        default: "1500"
+      limit:
+        description: "Universumsgröße (leer = Repo-Variable / 5250)"
+        required: false
+      source:
+        description: "sp500 oder broad (leer = Repo-Variable / broad)"
+        required: false
+
+concurrency:
+  group: compute-scores
+  cancel-in-progress: true
+
+jobs:
+  compute-and-write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90          # kein Frontend-Build hier -> deutlich kürzer als daily-update.yml
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}          # Timescale Cloud Postgres (asyncpg-URL)
+      LIMIT: ${{ github.event.inputs.limit || vars.SCREENER_LIMIT || '5250' }}
+      SOURCE: ${{ github.event.inputs.source || vars.SCREENER_SOURCE || 'broad' }}
+      REFRESH: ${{ github.event.inputs.refresh || vars.SCREENER_REFRESH || '1500' }}
+      YF_MAX_CONCURRENCY: "10"
+      YF_PERIOD: "1y"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Snapshot-Cache wiederherstellen
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: compute-scores-snapshots-${{ github.run_id }}
+          restore-keys: |
+            compute-scores-snapshots-
+
+      - name: Python-Abhängigkeiten
+        run: |
+          python -m pip install --upgrade pip
+          pip install "sqlalchemy[asyncio]>=2.0" asyncpg pydantic fastapi httpx lxml pandas yfinance
+
+      - name: Alembic-Migrationen anwenden
+        run: |
+          pip install alembic
+          alembic upgrade head
+
+      - name: Scores berechnen + in Timescale schreiben
+        run: |
+          python scripts/compute_scores.py \
+            --cache .cache/snapshots.pkl \
+            --refresh "$REFRESH" \
+            --limit "$LIMIT" \
+            --source "$SOURCE" \
+            --passes 3

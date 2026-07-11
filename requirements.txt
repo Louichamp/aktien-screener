@@ -8,10 +8,6 @@ sqlalchemy[asyncio]>=2.0
 pydantic>=2.11
 asyncpg>=0.29          # PostgreSQL-Treiber (Produktion)
 
-# --- Worker / Queue ---
-arq>=0.26
-redis>=5.0
-
 # --- Migrationen / Konfiguration ---
 alembic>=1.13
 python-dotenv>=1.0
@@ -23,12 +19,17 @@ pandas>=2.0            # von yfinance/Kronos genutzt
 lxml>=5.0              # HTML/CSV-Parsing der Universe-Quellen
 # Financial Modeling Prep (optional, DATA_PROVIDER=fmp) nutzt httpx (s.u.).
 
-# --- Kronos-Inferenz (PyTorch) ---
-# Schwer + GPU-abhängig; lazy importiert. In Produktion installieren:
+# --- Kronos-Inferenz (PyTorch) — OPTIONAL, NICHT für Standardbetrieb nötig ---
+# compute_scores.py nutzt fest den torch-freien StatisticalForecaster (GBM aus
+# echten Log-Renditen) — kein GPU/Torch-Bedarf im Batch-Job (GitHub-Actions-
+# Free-Runner hat keine GPU, torch allein ist >2GB). Nur wer selbst-gehostet mit
+# eigener GPU das echte Kronos-Modell nutzen will (FORECAST_BACKEND=kronos),
+# braucht das hier — lazy importiert, daher ohne Installation kein Fehler:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
-torch>=2.2            # nur Produktion (forecast-Worker)
-transformers>=4.40    # nur Produktion (forecast-Worker)
-numpy>=1.26           # nur Produktion (Band-Statistik)
+#   pip install transformers numpy
+# torch>=2.2
+# transformers>=4.40
+# numpy>=1.26
 
 # --- Tests ---
 httpx>=0.28

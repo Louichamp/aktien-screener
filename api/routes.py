@@ -51,11 +51,12 @@ def filter_params(
     min_dividend_yield: Annotated[float | None, Query(ge=0)] = None,
     max_risk_level: Annotated[int | None, Query(ge=1, le=5)] = None,
     tickers: Annotated[str | None, Query(description="Komma-Liste exakter Ticker (z.B. Favoriten)")] = None,
+    rare_only: Annotated[bool, Query(description="Nur seltene Chancen (Rarität + KAUFEN/STARK KAUFEN)")] = False,
 ) -> ScreenerFilters:
     return ScreenerFilters(
         search=search, strategy=strategy, risk_class=risk_class, sector=sector,
         country=country, asset_class=asset_class, status=status_, rating=rating,
-        trend_long=trend_long, trend_medium=trend_medium,
+        trend_long=trend_long, trend_medium=trend_medium, rare_only=rare_only,
         min_total_score=min_total_score, min_wlatar=min_wlatar, min_wlafar=min_wlafar,
         min_dividend_yield=min_dividend_yield, max_risk_level=max_risk_level,
         tickers=_ticker_list(tickers))

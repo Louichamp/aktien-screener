@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { loadDetail } from "@/lib/staticData";
-import type { ScreenerRowDetail } from "@/lib/types";
+import { fetchNews, fetchTicker } from "@/lib/api";
+import type { NewsItem, ScreenerRowDetail } from "@/lib/types";
 import { fmtPrice, totalColor, fmtDate, fmtAge, ageColor } from "@/lib/format";
 import { RecommendationBadge } from "@/components/Badges";
 import KronosForecast from "@/components/tearsheet/KronosForecast";
@@ -17,14 +17,22 @@ export default function AssetView() {
   const params = useSearchParams();
   const ticker = (params.get("t") ?? "").toUpperCase();
   const [row, setRow] = useState<ScreenerRowDetail | null>(null);
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [state, setState] = useState<"loading" | "ok" | "missing">("loading");
 
   useEffect(() => {
     if (!ticker) { setState("missing"); return; }
-    loadDetail(ticker).then((d) => {
+    fetchTicker(ticker).then((d) => {
       if (d) { setRow(d); setState("ok"); } else setState("missing");
     }).catch(() => setState("missing"));
   }, [ticker]);
+
+  // Live-Nachrichten separat (eigener Endpoint, on-demand — nicht Teil des
+  // Detail-Objekts wie im statischen Export-Modus).
+  useEffect(() => {
+    if (!ticker || state !== "ok") return;
+    fetchNews(ticker).then((r) => setNews(r.items)).catch(() => setNews([]));
+  }, [ticker, state]);
 
   if (state === "loading") {
     return <div className="mx-auto max-w-[920px] animate-pulse rounded-lg border border-edge bg-panel p-8">
@@ -84,7 +92,7 @@ export default function AssetView() {
       <div className="rule-thick" />
       <div className="py-6"><BullBearMemo bull={row.drivers.bull} bear={row.drivers.bear} /></div>
       <div className="rule" />
-      <div className="py-6"><NewsFeed items={row.news} /></div>
+      <div className="py-6"><NewsFeed items={news} /></div>
 
       {row.drivers.status_note && (
         <p className="border-t border-edge pt-3 text-xs italic text-muted">
