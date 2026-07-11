@@ -57,11 +57,35 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Nur diese Klassen darf der Cache beim Entpickeln instanziieren. `pickle.load()`
+# auf einer via `actions/cache` wiederhergestellten Datei ist grundsätzlich ein
+# Code-Execution-Risiko (ein manipulierter Pickle-Stream kann beliebige
+# Funktionen aufrufen) — der restriktive Unpickler unten lässt NUR die beiden
+# hier tatsächlich verwendeten Dataclasses zu und lehnt jede andere
+# Klassen-/Funktionsreferenz (das klassische Pickle-RCE-Gadget) hart ab.
+_ALLOWED_CACHE_CLASSES = {
+    ("screener.zones", "Candle"),
+    ("screener.pipeline", "MarketSnapshot"),
+}
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str):
+        if (module, name) not in _ALLOWED_CACHE_CLASSES:
+            raise pickle.UnpicklingError(
+                f"Cache enthält nicht erlaubte Klasse: {module}.{name}")
+        return super().find_class(module, name)
+
+
 def _load_cache(path: Path) -> dict:
     if path.exists():
         try:
             with open(path, "rb") as fh:
-                data = pickle.load(fh)
+                data = _RestrictedUnpickler(fh).load()
+            if not isinstance(data, dict):
+                print(f"Cache hat falschen Typ ({type(data).__name__}, erwartet dict) "
+                      "— starte leer", flush=True)
+                return {}
             print(f"Cache geladen: {len(data)} Snapshots", flush=True)
             return data
         except Exception as exc:

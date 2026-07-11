@@ -51,10 +51,14 @@ export async function POST(request: NextRequest) {
 
   const hash = await computeHash(expected);
   const res = NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+  // secure an das tatsächliche Protokoll koppeln statt hart auf true: sonst
+  // sendet der Browser das Cookie in der lokalen Entwicklung über http://
+  // nicht mit -> Login-Redirect-Loop sobald SITE_PASSWORD gesetzt ist.
+  // Vercel terminiert TLS und liefert https: korrekt in nextUrl.protocol.
   res.cookies.set(COOKIE_NAME, hash, {
     maxAge: COOKIE_MAX_AGE,
     path: "/",
-    secure: true,
+    secure: request.nextUrl.protocol === "https:",
     httpOnly: true,
     sameSite: "lax",
   });

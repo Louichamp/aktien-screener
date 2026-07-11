@@ -1,6 +1,7 @@
 # Render-Deployment: NUR die Lese-Schicht (api/main.py). Bewusst getrennt von
-# requirements.txt (das komplette Repo inkl. Batch-Pipeline, yfinance, torch für
-# den Forecast-Worker) — api/ importiert nachweislich nichts davon auf
+# requirements.txt (das komplette Repo inkl. Batch-Pipeline, yfinance, sowie
+# torch — optional nur für Self-Hosting mit FORECAST_BACKEND=kronos, kein
+# Worker-Prozess mehr) — api/ importiert nachweislich nichts davon auf
 # Modulebene (geprüft: nur fastapi/sqlalchemy/pydantic + infrastructure.database).
 # Ohne diese Trennung würde der 512MB-RAM-Free-Dyno an torch (>2GB) ersticken
 # und der Render-Build unnötig lange dauern.
