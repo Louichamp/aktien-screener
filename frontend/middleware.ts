@@ -22,12 +22,22 @@ export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   // Nur HTML-Seiten schützen. API-Routen (holen ihre Daten vom Backend, nicht
-  // von hier) und statische Assets immer durchlassen.
+  // von hier), /health (Monitoring, soll ohne Login erreichbar sein) und
+  // statische Assets immer durchlassen.
+  //
+  // WICHTIG: next.config.mjs setzt trailingSlash:true (Erbe der alten Static-
+  // Export-Config) — Next.js selbst 308-redirected /login -> /login/. Ohne
+  // die "/login/"-Variante hier würde DAS wiederum von dieser Middleware als
+  // ungeschützte Seite verkannt -> erneuter Redirect zu /login -> Next.js
+  // redirected wieder auf /login/ -> Endlosschleife (genau das brach den
+  // ersten Deploy: 123 Edge-Requests, 0 Function-Invocations, jede Seite
+  // hing in diesem Loop fest).
   if (
-    pathname === "/login" ||
+    pathname === "/login" || pathname === "/login/" ||
     pathname.startsWith("/api/login") ||
     pathname.startsWith("/_next/") ||
-    pathname === "/favicon.ico"
+    pathname === "/favicon.ico" ||
+    pathname === "/health"
   ) {
     return NextResponse.next();
   }
