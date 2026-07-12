@@ -94,6 +94,8 @@ export interface Summary {
   total: number;
   avg_total_score: number | null;
   by_rating: Record<string, number>;
+  oldest_data_as_of: string | null;
+  newest_data_as_of: string | null;
 }
 
 export interface ForecastPoint {

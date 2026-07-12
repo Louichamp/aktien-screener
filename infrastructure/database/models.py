@@ -101,8 +101,10 @@ class ScreenerRowModel(Base):
         Index("ix_screener_rows_sector_score", "sector", "total_score"),
         Index("ix_screener_rows_strategy_score", "strategy_tag", "total_score"),
         Index("ix_screener_rows_assetclass_score", "asset_class", "total_score"),
-        Index("ix_screener_rows_drivers_gin", "drivers", postgresql_using="gin"),
-        Index("ix_screener_rows_targets_gin", "targets", postgresql_using="gin"),
-        Index("ix_screener_rows_forecast_gin", "forecast_history", postgresql_using="gin"),
-        Index("ix_screener_rows_pricehist_gin", "price_history", postgresql_using="gin"),
+        # KEINE GIN-Indizes mehr auf drivers/targets/forecast_history/price_history:
+        # api/queries.py filtert nie über JSONB-Containment (`@>`/`?`) auf diesen
+        # Spalten — nur Passthrough-Payload fürs Tearsheet. GIN-Indizes auf
+        # Text-/Array-lastigem JSONB sind oft GRÖSSER als die Daten selbst; auf dem
+        # 0.5GB-Timescale-Free-Tier ist das reiner Overhead ohne Query-Nutzen
+        # (entfernt in Migration 0006, s. storage_notes.md).
     )

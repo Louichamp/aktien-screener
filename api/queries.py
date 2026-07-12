@@ -51,6 +51,7 @@ class ScreenerFilters:
     min_dividend_yield: float | None = None
     max_risk_level: int | None = None
     tickers: list[str] | None = None          # exakte Auswahl (z.B. Favoriten)
+    rare_only: bool = False                    # selten/sehr selten + KAUFEN/STARK KAUFEN
 
 
 def _conditions(f: ScreenerFilters) -> list:
@@ -90,6 +91,9 @@ def _conditions(f: ScreenerFilters) -> list:
         c.append(M.risikoklasse.in_(allowed))
     if f.tickers:
         c.append(M.ticker.in_([t.upper() for t in f.tickers]))
+    if f.rare_only:
+        c.append(M.chance_rarity.in_(["selten", "sehr selten"]))
+        c.append(M.rating.in_(["KAUFEN", "STARK KAUFEN"]))
     return c
 
 
@@ -146,9 +150,11 @@ async def query_facets(session: AsyncSession):
 
 
 async def query_summary(session: AsyncSession, filters: ScreenerFilters | None = None) -> dict:
-    """Marktbreite der GEFILTERTEN Menge: Anzahl je Rating + Schnitt-Gesamtscore.
+    """Marktbreite der GEFILTERTEN Menge: Anzahl je Rating + Schnitt-Gesamtscore
+    + Datenabdeckung (ältester/neuester data_as_of — ISO-Strings sortieren
+    lexikographisch korrekt, daher MIN/MAX direkt auf der String-Spalte).
 
-    Ein einziges GROUP BY (indexiert) — auch bei 5.000+ in Millisekunden.
+    Zwei schlanke, indexierte Aggregat-Queries — auch bei 5.000+ in Millisekunden.
     """
     conds = _conditions(filters or ScreenerFilters())
     rows = (await session.execute(
@@ -159,5 +165,10 @@ async def query_summary(session: AsyncSession, filters: ScreenerFilters | None =
     # gewichteter Schnitt des Gesamtscores
     num = sum((avg or 0) * n for _, n, avg in rows if avg is not None)
     den = sum(n for _, n, avg in rows if avg is not None)
+
+    oldest, newest = (await session.execute(
+        select(func.min(M.data_as_of), func.max(M.data_as_of)).where(*conds))).one()
+
     return {"total": total, "by_rating": by_rating,
-            "avg_total_score": round(num / den, 1) if den else None}
+            "avg_total_score": round(num / den, 1) if den else None,
+            "oldest_data_as_of": oldest, "newest_data_as_of": newest}

@@ -1,0 +1,29 @@
+# Render Blueprint für die FastAPI-Lese-Schicht (api/main.py).
+# api/main.py macht KEINE Live-Berechnung — nur SELECT-Queries gegen die von
+# compute_scores.py vorberechnete screener_rows-Tabelle. Kein Code-Change nötig,
+# nur diese Deployment-Konfiguration.
+#
+# WICHTIG (Render Free Tier): der Dyno schläft nach 15 Min. Inaktivität ein.
+# Der nächste Request weckt ihn auf, braucht dabei aber ~30-50s Cold-Start
+# (Kaltstart-Verzögerung für den ERSTEN Besucher nach einer Pause). Das ist ein
+# strukturelles Free-Tier-Limit, kein Bug — bei echtem Traffic-Bedarf ohne
+# Cold-Start bräuchte es den kostenpflichtigen "Starter"-Plan (~$7/Monat).
+
+services:
+  - type: web
+    name: aktien-screener-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: "pip install -r requirements-api.txt"
+    startCommand: "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        sync: false          # in Render-Dashboard setzen (Timescale-Cloud-URL, s. Env-Var-Liste)
+      - key: CORS_ORIGINS
+        sync: false          # z.B. https://dein-projekt.vercel.app
+      - key: SCREENER_CREATE_SCHEMA
+        value: "false"        # Produktion: Schema via Alembic (compute-scores.yml), nicht Auto-Create
