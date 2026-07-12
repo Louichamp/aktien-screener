@@ -1,6 +1,13 @@
 // Zentrales API-Fetch-Handling für die FastAPI-Lese-Schicht.
 // Filter/Sort/Pagination werden als Query-Parameter an /api/v1/screener gereicht
 // — die DB erledigt WHERE/ORDER BY/LIMIT/OFFSET (siehe api/queries.py).
+//
+// Backend läuft als Vercel Python Serverless Function (frontend/api/index.py,
+// per frontend/vercel.json unter /api/v1/* geroutet) — SAME-ORIGIN wie das
+// Frontend selbst. Kein NEXT_PUBLIC_API_BASE nötig, kein CORS-Problem (Browser
+// erlaubt same-origin-Requests immer). Nur für lokale Entwicklung OHNE
+// `vercel dev` (z. B. separat laufendes `uvicorn api.main:app`) via
+// NEXT_PUBLIC_API_BASE überschreibbar.
 
 import type {
   Facets,
@@ -11,8 +18,7 @@ import type {
   Summary,
 } from "./types";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "";
 
 function buildQuery(q: ScreenerQuery): string {
   const sp = new URLSearchParams();

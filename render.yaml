@@ -1,13 +1,17 @@
-# Render Blueprint für die FastAPI-Lese-Schicht (api/main.py).
+# ALTERNATIVER Deployment-Pfad (nicht der aktive): Render Blueprint für die
+# FastAPI-Lese-Schicht. Der AKTIVE Pfad ist frontend/api/index.py + vercel.json
+# (Backend läuft als Python Serverless Function direkt auf Vercel, same-origin
+# mit dem Frontend, kein zweiter Account/keine Kreditkarten-Verifizierung
+# nötig). Diese Datei bleibt als Option erhalten, falls später ein dauerhaft
+# laufender Server ohne Serverless-Cold-Starts gewünscht ist.
+#
 # api/main.py macht KEINE Live-Berechnung — nur SELECT-Queries gegen die von
 # compute_scores.py vorberechnete screener_rows-Tabelle. Kein Code-Change nötig,
 # nur diese Deployment-Konfiguration.
 #
-# WICHTIG (Render Free Tier): der Dyno schläft nach 15 Min. Inaktivität ein.
-# Der nächste Request weckt ihn auf, braucht dabei aber ~30-50s Cold-Start
-# (Kaltstart-Verzögerung für den ERSTEN Besucher nach einer Pause). Das ist ein
-# strukturelles Free-Tier-Limit, kein Bug — bei echtem Traffic-Bedarf ohne
-# Cold-Start bräuchte es den kostenpflichtigen "Starter"-Plan (~$7/Monat).
+# WICHTIG (Render Free Tier): braucht eine Kreditkarte zur Identitätsprüfung
+# (temporäre $1-Autorisierung, keine Abbuchung laut Render) UND der Dyno
+# schläft nach 15 Min. Inaktivität ein (~30-50s Cold-Start beim Aufwecken).
 
 services:
   - type: web
