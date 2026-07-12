@@ -1,1 +1,1 @@
-"""Infrastruktur: Persistenz (PostgreSQL/TimescaleDB) und arq-Worker."""
+"""Infrastruktur: Persistenz (PostgreSQL), Markt-Daten-Provider, Forecast-Modelle."""

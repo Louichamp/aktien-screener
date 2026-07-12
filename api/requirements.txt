@@ -1,0 +1,14 @@
+# Vercel Python-Deployment: NUR die Lese-Schicht (api/main.py). Direkt neben
+# dem Entry-Point (api/main.py) platziert, damit Vercels Python-Builder diese
+# schlanke Datei nimmt statt des vollen ../requirements.txt (das Repo-weite
+# Batch-Pipeline-Deps wie yfinance/pandas/lxml enthält, die api/ nachweislich
+# nicht importiert — geprüft: nur fastapi/sqlalchemy/pydantic +
+# infrastructure.database). Inhaltlich identisch zu ../requirements-api.txt
+# (das für die Render-Alternative genutzt wird).
+
+fastapi>=0.137
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0
+pydantic>=2.11
+asyncpg>=0.29
+httpx>=0.28
