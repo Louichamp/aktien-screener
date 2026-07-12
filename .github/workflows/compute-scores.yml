@@ -1,8 +1,8 @@
 name: Compute Scores (Live-API-Architektur)
 
-# Batch-Score-Berechnung für den Render+Vercel+Timescale-Pfad. Läuft NUR als
+# Batch-Score-Berechnung für den Render+Vercel+Neon-Pfad. Läuft NUR als
 # Cron (kein permanenter Prozess) und schreibt direkt in die produktive
-# Timescale-Cloud-Postgres-DB. Baut/deployed NICHTS Frontend-seitiges — Vercel
+# Neon-Postgres-DB (oder anderer Postgres-Anbieter). Baut/deployed NICHTS Frontend-seitiges — Vercel
 # baut bei jedem Git-Push selbst (eigene Pipeline, eigenes Free-Tier-Budget).
 #
 # Getrennt von daily-update.yml (Netlify-Static-Pfad) — beide können parallel
@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 90          # kein Frontend-Build hier -> deutlich kürzer als daily-update.yml
 
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}          # Timescale Cloud Postgres (asyncpg-URL)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}          # Neon Postgres (asyncpg-URL)
       LIMIT: ${{ github.event.inputs.limit || vars.SCREENER_LIMIT || '5250' }}
       SOURCE: ${{ github.event.inputs.source || vars.SCREENER_SOURCE || 'broad' }}
       REFRESH: ${{ github.event.inputs.refresh || vars.SCREENER_REFRESH || '1500' }}
@@ -69,7 +69,7 @@ jobs:
           pip install alembic
           alembic upgrade head
 
-      - name: Scores berechnen + in Timescale schreiben
+      - name: Scores berechnen + in DB schreiben
         run: |
           python scripts/compute_scores.py \
             --cache .cache/snapshots.pkl \

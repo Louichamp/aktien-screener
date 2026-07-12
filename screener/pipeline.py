@@ -182,7 +182,7 @@ def _forecast_return(forecast: dict[str, Any] | None, price: float | None) -> fl
 
 
 # Obergrenze für die je Titel gespeicherten Konfluenzzonen (JSONB-Storage-Deckel,
-# siehe Timescale-Free-Tier-Kostenschätzung). Zonen sind schon nach Stärke
+# siehe Storage-Kostenschätzung). Zonen sind schon nach Stärke
 # sortiert -> Kappen verliert nur die schwächsten/am wenigsten relevanten.
 _MAX_ZONES = 15
 

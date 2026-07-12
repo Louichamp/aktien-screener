@@ -105,6 +105,6 @@ class ScreenerRowModel(Base):
         # api/queries.py filtert nie über JSONB-Containment (`@>`/`?`) auf diesen
         # Spalten — nur Passthrough-Payload fürs Tearsheet. GIN-Indizes auf
         # Text-/Array-lastigem JSONB sind oft GRÖSSER als die Daten selbst; auf dem
-        # 0.5GB-Timescale-Free-Tier ist das reiner Overhead ohne Query-Nutzen
+        # 0.5GB-Postgres-Free-Tier ist das reiner Overhead ohne Query-Nutzen
         # (entfernt in Migration 0006, s. storage_notes.md).
     )

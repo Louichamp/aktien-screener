@@ -1,4 +1,12 @@
-# Storage-Strategie für Timescale Cloud Free Tier (~0.5 GB)
+# Storage-Strategie für den Postgres Free Tier (~0.5 GB)
+
+**Provider-Update (2026-07-12):** Timescale Cloud bietet keinen dauerhaft
+kostenlosen Tarif mehr (nur ein 29-Tage-Trial mit $1.000 Guthaben, danach ab
+$30/Monat). Die DB läuft daher auf **Neon** (echter, dauerhaft kostenloser
+Postgres-Tarif, 0.5 GB, keine Kreditkarte nötig). Die komplette Argumentation
+unten bleibt unverändert gültig — sie greift auf reines Postgres-Verhalten
+zurück (Upsert-Tabelle, JSONB-Storage), nicht auf eine Timescale-spezifische
+Erweiterung, die wir ohnehin nie gebraucht haben (s. u.).
 
 ## Warum TimescaleDB-Compression/Retention hier NICHT greifen
 

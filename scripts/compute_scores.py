@@ -1,7 +1,7 @@
-"""Batch-Score-Berechnung für die Live-API-Architektur (Render + Timescale Cloud).
+"""Batch-Score-Berechnung für die Live-API-Architektur (Render + Neon).
 
 Läuft EINMAL pro Aufruf (GitHub Actions Cron, nicht dauerhaft) und schreibt alle
-Scores direkt in die produktive Postgres/Timescale-DB (`DATABASE_URL`). Das
+Scores direkt in die produktive Postgres-DB (`DATABASE_URL`). Das
 FastAPI-Backend (`api/main.py`) liest diese Tabelle danach nur noch — es
 berechnet nichts mehr live bei Requests.
 
@@ -11,7 +11,7 @@ Snapshot-Cache (Pickle) wächst über die Läufe, jeder Lauf frischt nur die
 cross-sectional neu (Peer-Perzentile brauchen die volle Kohorte, nicht nur den
 Tages-Batch). Der Cache liegt bewusst NICHT in der DB — nur das fertige,
 kompakte Ergebnis (`screener_rows`) landet in Postgres. Das hält den
-Timescale-Storage klein (siehe Punkt 5/7 der Kostenschätzung); Rohdaten
+DB-Storage klein (siehe Punkt 5/7 der Kostenschätzung); Rohdaten
 (Kerzen, Technicals, Fundamentals) sind Wegwerf-Zwischenstand, kein Produktdatum.
 
 Kronos/torch bewusst NICHT hier: der GitHub-Actions-Free-Runner hat keine GPU,
@@ -214,7 +214,7 @@ async def main() -> None:
         await forecaster.aclose()
 
     print(f"Pipeline über {len(cache)} Werte rechnen (cross-sectional) …", flush=True)
-    engine = create_engine()                       # DATABASE_URL -> Timescale Cloud Postgres
+    engine = create_engine()                       # DATABASE_URL -> Neon Postgres (oder anderer Anbieter)
     await init_models(engine)                       # idempotent; Produktions-Schema via Alembic
     sm = create_session_factory(engine)
     repo = ScreenerRepository(engine)

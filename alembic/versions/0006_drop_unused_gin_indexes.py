@@ -1,4 +1,4 @@
-"""GIN-Indizes auf JSONB-Passthrough-Spalten entfernen (Storage-Deckel Timescale Free Tier)
+"""GIN-Indizes auf JSONB-Passthrough-Spalten entfernen (Storage-Deckel Postgres Free Tier)
 
 Revision ID: 0006_drop_unused_gin
 Revises: 0005_data_as_of
