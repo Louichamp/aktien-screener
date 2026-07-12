@@ -244,7 +244,7 @@ const Row = memo(function Row({
         </button>
       </td>
       <td className={`px-3 ${pad}`}>
-        <Link href={`/asset/?t=${encodeURIComponent(row.ticker)}`} className="group block">
+        <Link href={`/asset?t=${encodeURIComponent(row.ticker)}`} className="group block">
           <span className="font-semibold text-slate-100 group-hover:text-accent">
             {row.name ?? row.ticker}
           </span>
