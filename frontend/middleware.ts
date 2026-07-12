@@ -59,8 +59,14 @@ export async function middleware(request: NextRequest) {
   return NextResponse.redirect(loginUrl);
 }
 
-// Alle Pfade außer statischen Next.js-Assets (Middleware kann diese nicht per
-// pathname-Check oben ausschließen, da sie vor dem Routing läuft).
+// Alle Pfade außer statischen Next.js-Assets UND /api/login. Der In-Function-
+// Ausschluss oben reichte NICHT: Next.js liefert Set-Cookie-Header aus einem
+// Route-Handler als internes "x-middleware-set-cookie" statt eines echten
+// Set-Cookie an den Browser, sobald derselbe Request-Pfad ZUSÄTZLICH von der
+// Middleware verarbeitet wird (auch wenn sie nur NextResponse.next() macht) —
+// live reproduziert: Login-POST kam 200 zurück, aber der Browser bekam nie
+// ein echtes Set-Cookie -> Session blieb leer -> sofortiger Zurück-Redirect
+// zu /login. /api/login muss daher schon HIER, auf Matcher-Ebene, raus.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/login).*)"],
 };
