@@ -721,6 +721,47 @@ async def test_pipeline_persists_price_history_and_forecast(fresh_db):
     assert d["targets"]["forecast_method"] == "statistical"
 
 
+async def test_writeback_isolates_bad_ticker_from_rest_of_batch(fresh_db):
+    """Ein DB-Fehler bei EINEM Ticker (z.B. Constraint-Verletzung wie ein Name
+    > 255 Zeichen in Produktion) darf den Rest des Batches nicht mitreißen.
+    Live-Vorfall: ein 166-Zeichen-Name (Depositary-Shares-Wertpapier) brach
+    ungeschützt die GESAMTE Transaktion — 3 Tage in Folge kein einziger Ticker
+    geschrieben. begin_nested() pro Ticker (screener/pipeline.py) verhindert
+    das. SQLite (Test-DB) erzwingt anders als Postgres keine VARCHAR-Längen,
+    daher wird der Fehler hier direkt am Repository simuliert — getestet wird
+    der Isolations-Mechanismus, nicht Postgres' eigene Constraint-Prüfung."""
+    url, engine, sm = fresh_db
+    good = build_snapshot("GOOD", price=50.0)
+    bad = build_snapshot("BAD", price=50.0)
+    repo = ScreenerRepository(engine)
+
+    real_upsert = repo.upsert_screener_row
+    async def flaky_upsert(session, values):
+        if values["ticker"] == "BAD":
+            raise ValueError("simulierte Constraint-Verletzung (z.B. StringDataRightTruncation)")
+        return await real_upsert(session, values)
+    repo.upsert_screener_row = flaky_upsert
+
+    async with sm() as session:
+        res = await run_screener_pipeline(
+            ["GOOD", "BAD"], session, repository=repo,
+            snapshots={"GOOD": good, "BAD": bad}, commit=True)
+
+    assert res.processed == 1                          # nur GOOD durchgekommen
+    assert res.failed == 1
+    assert "BAD" in res.errors
+
+    app = create_app(url)
+    app.state.db_engine, app.state.sessionmaker = engine, sm
+    app.state.news_provider, app.state.news_cache = None, TTLCache()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as c:
+        r_good = await c.get("/api/v1/screener/GOOD")
+        r_bad = await c.get("/api/v1/screener/BAD")
+    assert r_good.status_code == 200                   # GOOD trotzdem geschrieben
+    assert r_bad.status_code == 404                     # BAD korrekt ausgelassen
+
+
 # ---- Rotierender Sync: älteste zuerst + data_as_of -------------------------
 async def test_rotation_selects_oldest_first():
     from scripts.rotating_sync import _select_oldest

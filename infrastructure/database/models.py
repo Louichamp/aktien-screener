@@ -40,7 +40,11 @@ class ScreenerRowModel(Base):
     ticker: Mapped[str] = mapped_column(String(32), primary_key=True)
     # Stammdaten (für Anzeige & Filter): Name ist die primäre Anzeige-Spalte,
     # Ticker bleibt der Schlüssel und eine ein-/ausblendbare Spalte.
-    name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 255 statt 128: einige Wertpapiere (Depositary Shares, Preferred-Stock-
+    # Serien) haben legale Namen >150 Zeichen — mit 128 crashte der Write-Back
+    # live (StringDataRightTruncationError bei "First Citizens BancShares, Inc.
+    # Depositary Shares, ... Series E", 166 Zeichen).
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sector: Mapped[str | None] = mapped_column(String(64), nullable=True)      # Branche
     country: Mapped[str | None] = mapped_column(String(48), nullable=True)     # Land
     asset_class: Mapped[str | None] = mapped_column(String(16), nullable=True)  # Aktie/ETF/Krypto/Forex

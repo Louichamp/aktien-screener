@@ -263,7 +263,14 @@ async def run_screener_pipeline(
     strat_inputs = [_strategy_input(d["snap"], d["scored"]) for d in per.values()]
     assignments = strategy_engine.evaluate(strat_inputs)
 
-    # --- Write-Back: atomar (ein commit) -------------------------------------
+    # --- Write-Back: ein Commit, aber PRO TICKER fehlerisoliert --------------
+    # Jeder Write läuft in einer SAVEPOINT (begin_nested): scheitert ein
+    # Ticker (z. B. DB-Constraint-Verletzung wie zu lange Strings), rollt NUR
+    # dessen Savepoint zurück — die äußere Transaktion bleibt gesund und alle
+    # anderen Ticker werden trotzdem geschrieben. Ohne das killt ein einziger
+    # kaputter Datensatz den GESAMTEN Lauf (live passiert: StringDataRight-
+    # TruncationError bei einem 166-Zeichen-Namen brach 3 Tage in Folge den
+    # kompletten täglichen Cron-Lauf, kein einziger Ticker wurde geschrieben).
     rows: list[ScreenerRow] = []
     for tk, d in per.items():
         scored, plan, cinp, cls, s = d["scored"], d["plan"], d["cinp"], d["cls"], d["snap"]
@@ -279,9 +286,13 @@ async def run_screener_pipeline(
             forecast_return=_forecast_return(s.forecast, s.price),
             forecast_method=(s.forecast or {}).get("method"),
             data_as_of=s.as_of)
-        await repository.upsert_screener_row(db_session, values)
-        await repository.upsert_status_memory(db_session, tk, cls.memory)
-        rows.append(row)
+        try:
+            async with db_session.begin_nested():
+                await repository.upsert_screener_row(db_session, values)
+                await repository.upsert_status_memory(db_session, tk, cls.memory)
+            rows.append(row)
+        except Exception as exc:                   # ein Ticker darf den Lauf nie killen
+            errors[tk] = f"writeback: {exc}"
 
     if commit:
         await db_session.commit()
