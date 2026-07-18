@@ -32,12 +32,30 @@ DEFAULT_COMPOSITES: dict[str, dict[str, float]] = {
 }
 
 
-def compose(results: dict[str, ScoreResult], weights: dict[str, float]) -> float | None:
+# Mindest-Datenabdeckung: ein Composite wird nur berichtet, wenn mindestens
+# dieser Anteil des GESAMT-Gewichts von tatsächlich vorhandenen Signalen
+# gedeckt ist. Ohne dieses Gate kann EIN einziges Signal (z. B. market_leadership,
+# das rein aus Fundamentaldaten-Peer-Perzentilen kommt und keine Kerzen braucht)
+# bei fast komplett fehlenden übrigen Signalen ein volles, selbstbewusst
+# wirkendes Rating erzeugen — live beobachtet: ein Titel mit nur 1 Kerze
+# Historie (dünn gehandeltes/neu gelistetes Wertpapier) bekam WLATAR 9/10 und
+# "STARK KAUFEN" 87/100, obwohl 7 von 8 technischen Signalen fehlten. Der
+# Schwellwert 0.3 ist bewusst konservativ (nicht 0.5): ein Composite mit z. B.
+# drei von acht etwa gleich gewichteten Signalen soll noch ein Rating zeigen
+# dürfen, nur die Extremfälle (fast alles fehlt) werden abgefangen.
+MIN_COVERAGE = 0.3
+
+
+def compose(results: dict[str, ScoreResult], weights: dict[str, float],
+           *, min_coverage: float = MIN_COVERAGE) -> float | None:
     """Gewichteter Mittelwert über vorhandene, fehlerfreie Sub-Scores (0..10).
 
     Fehlende/fehlerhafte Slugs werden ausgelassen und die Gewichte über die
     vorhandenen renormiert — dadurch brechen neue oder ausgefallene Scores
-    bestehende Composites nicht.
+    bestehende Composites nicht. Deckt die Summe der vorhandenen Gewichte
+    weniger als `min_coverage` des theoretischen Gesamtgewichts ab, gilt das
+    Composite als nicht belastbar und liefert `None` (ehrliches "unbekannt")
+    statt eines möglicherweise irreführenden Werts aus 1-2 Signalen.
     """
     num = den = 0.0
     for slug, w in weights.items():
@@ -46,4 +64,7 @@ def compose(results: dict[str, ScoreResult], weights: dict[str, float]) -> float
             continue
         num += w * res.score
         den += w
-    return None if den == 0 else num / den
+    total_weight = sum(weights.values())
+    if den == 0 or (total_weight > 0 and den / total_weight < min_coverage):
+        return None
+    return num / den
