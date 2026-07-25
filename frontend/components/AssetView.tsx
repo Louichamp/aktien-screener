@@ -18,20 +18,33 @@ export default function AssetView() {
   const ticker = (params.get("t") ?? "").toUpperCase();
   const [row, setRow] = useState<ScreenerRowDetail | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
+  const [newsNote, setNewsNote] = useState<string | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "missing">("loading");
 
   useEffect(() => {
     if (!ticker) { setState("missing"); return; }
+    // Bei Ticker-Wechsel (z.B. Browser-Vor/Zurück zwischen zwei /asset?t=X-URLs,
+    // oder manuell in der Adresszeile) sofort zurück auf "loading" — sonst
+    // bleibt das TEARSHEET DES VORHERIGEN TICKERS sichtbar, bis der neue Fetch
+    // auflöst (row/state wurden vorher nicht zurückgesetzt).
+    setState("loading");
+    setRow(null);
+    let cancelled = false;
     fetchTicker(ticker).then((d) => {
+      if (cancelled) return;
       if (d) { setRow(d); setState("ok"); } else setState("missing");
-    }).catch(() => setState("missing"));
+    }).catch(() => { if (!cancelled) setState("missing"); });
+    return () => { cancelled = true; };
   }, [ticker]);
 
   // Live-Nachrichten separat (eigener Endpoint, on-demand — nicht Teil des
   // Detail-Objekts wie im statischen Export-Modus).
   useEffect(() => {
     if (!ticker || state !== "ok") return;
-    fetchNews(ticker).then((r) => setNews(r.items)).catch(() => setNews([]));
+    setNews([]);
+    setNewsNote(null);
+    fetchNews(ticker).then((r) => { setNews(r.items); setNewsNote(r.note ?? null); })
+      .catch(() => setNews([]));
   }, [ticker, state]);
 
   if (state === "loading") {
@@ -92,7 +105,7 @@ export default function AssetView() {
       <div className="rule-thick" />
       <div className="py-6"><BullBearMemo bull={row.drivers.bull} bear={row.drivers.bear} /></div>
       <div className="rule" />
-      <div className="py-6"><NewsFeed items={news} /></div>
+      <div className="py-6"><NewsFeed items={news} note={newsNote} /></div>
 
       {row.drivers.status_note && (
         <p className="border-t border-edge pt-3 text-xs italic text-muted">

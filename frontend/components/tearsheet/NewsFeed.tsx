@@ -1,16 +1,18 @@
 import type { NewsItem } from "@/lib/types";
 import { fmtDate } from "@/lib/format";
 
-// Nachrichten aus dem Detail-Export (--with-news). Ohne Export-News: Hinweis.
-export default function NewsFeed({ items }: { items?: NewsItem[] }) {
+// Nachrichten kommen live vom /news-Endpoint (api/routes.py:get_screener_news).
+// `note` ist dessen Erklärung, WARUM ggf. keine Nachrichten da sind (kein
+// News-Provider konfiguriert, Abruf fehlgeschlagen, oder wirklich keine News) —
+// vorher wurde das verworfen und stattdessen immer derselbe veraltete
+// Static-Export-Hinweis gezeigt, unabhängig vom tatsächlichen Grund.
+export default function NewsFeed({ items, note }: { items?: NewsItem[]; note?: string | null }) {
   const news = items ?? [];
   return (
     <section>
       <h3 className="mb-3 font-serif text-lg font-bold text-slate-100">Nachrichten</h3>
       {news.length === 0 ? (
-        <p className="text-sm text-muted">
-          Keine Nachrichten im Export. (Mit <code>export_static.py --with-news</code> einbinden.)
-        </p>
+        <p className="text-sm text-muted">{note || "Keine Nachrichten verfügbar."}</p>
       ) : (
         <ul className="space-y-3">
           {news.map((n, i) => (

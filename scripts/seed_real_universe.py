@@ -62,22 +62,36 @@ async def seed_real_universe(provider: Any, repository: ScreenerRepository,
     profiles = dict(await asyncio.gather(*(one(t) for t in tickers)))
 
     # 3) Stammdaten upserten (nur Metadaten-Spalten; JSON-NOT-NULL-Spalten füllen
-    #    beim INSERT ihre Defaults []/{}).
+    #    beim INSERT ihre Defaults []/{}). Pro Ticker in einer SAVEPOINT
+    #    (begin_nested) — sonst killt EIN Constraint-Verstoß (z. B. ein Name/eine
+    #    Branche/ein Land, das die jeweilige String-Spaltenbreite sprengt) die
+    #    komplette Transaktion und damit den ganzen Lauf ohne einen einzigen
+    #    geschriebenen Ticker (derselbe Bug wie der, der screener/pipeline.py's
+    #    Write-Back drei Tage in Folge crashen ließ — hier bislang ungefixt).
+    failed: list[str] = []
     async with session_factory() as s:
         for tk in tickers:
             base = meta.get(tk, {})
             prof = profiles.get(tk) or {}
-            await repository.upsert_screener_row(s, dict(
-                ticker=tk,
-                name=prof.get("name") or base.get("name") or tk,
-                sector=prof.get("sector") or base.get("sector"),
-                country=prof.get("country"),
-                asset_class=prof.get("asset_class") or "Aktie",
-                price=prof.get("price"),
-                currency=prof.get("currency") or "USD",
-                dividend_yield=prof.get("dividend_yield"),
-            ))
+            try:
+                async with s.begin_nested():
+                    await repository.upsert_screener_row(s, dict(
+                        ticker=tk,
+                        name=prof.get("name") or base.get("name") or tk,
+                        sector=prof.get("sector") or base.get("sector"),
+                        country=prof.get("country"),
+                        asset_class=prof.get("asset_class") or "Aktie",
+                        price=prof.get("price"),
+                        currency=prof.get("currency") or "USD",
+                        dividend_yield=prof.get("dividend_yield"),
+                    ))
+            except Exception as exc:                   # ein Ticker darf den Lauf nie killen
+                failed.append(tk)
+                print(f"  WARN: {tk} nicht geschrieben ({exc})", file=sys.stderr)
         await s.commit()
+    if failed:
+        print(f"seed_real_universe: {len(failed)} von {len(tickers)} Tickern "
+              f"übersprungen: {', '.join(failed)}", file=sys.stderr)
     return len(tickers)
 
 

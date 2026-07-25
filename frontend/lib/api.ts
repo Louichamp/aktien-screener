@@ -2,12 +2,14 @@
 // Filter/Sort/Pagination werden als Query-Parameter an /api/v1/screener gereicht
 // — die DB erledigt WHERE/ORDER BY/LIMIT/OFFSET (siehe api/queries.py).
 //
-// Backend läuft als Vercel Python Serverless Function (frontend/api/index.py,
-// per frontend/vercel.json unter /api/v1/* geroutet) — SAME-ORIGIN wie das
-// Frontend selbst. Kein NEXT_PUBLIC_API_BASE nötig, kein CORS-Problem (Browser
-// erlaubt same-origin-Requests immer). Nur für lokale Entwicklung OHNE
-// `vercel dev` (z. B. separat laufendes `uvicorn api.main:app`) via
-// NEXT_PUBLIC_API_BASE überschreibbar.
+// Backend ist ein EIGENES, zweites Vercel-Projekt (Root Directory = Repo-Root,
+// api/main.py läuft dort unverändert), NICHT im selben Projekt wie dieses
+// Frontend — next.config.mjs proxied per rewrites() zu dessen URL
+// (BACKEND_URL). Der Browser sieht dadurch trotzdem nur EINE Origin (dieses
+// Frontend), daher kein CORS-Problem — aber same-origin kommt vom Next.js-
+// Server-Proxy, nicht davon, dass Backend+Frontend dasselbe Deployment wären.
+// NEXT_PUBLIC_API_BASE bleibt nur für lokale Entwicklung ohne diesen Proxy
+// (z. B. separat laufendes `uvicorn api.main:app`) relevant.
 
 import type {
   Facets,
@@ -68,9 +70,27 @@ export async function fetchSummary(q: ScreenerQuery): Promise<Summary> {
   return res.json();
 }
 
-// Für den CSV-Export: ruft die API mit aktuellen Filtern, aber großer Seite.
-export async function fetchScreenerAll(q: ScreenerQuery, cap = 1000): Promise<ScreenerListResponse> {
-  return fetchScreener({ ...q, limit: Math.min(cap, 500), offset: 0 });
+// Für den CSV-Export: holt ALLE zur Filterung passenden Zeilen, nicht nur eine
+// Seite. api/routes.py deckelt `limit` hart auf 500 (Performance-Schutz für
+// den normalen Listen-Endpoint) — ein einzelner fetchScreener-Call kappte den
+// Export bisher STILL bei 500 Zeilen (ohne Hinweis, in Backend-Standard-
+// Sortierung statt der auf dem Bildschirm gewählten). Bei einem 5250er-
+// Universum ist "alles exportieren" ohne Filter ein sehr realistischer
+// Auslöser. Paginiert jetzt in 500er-Blöcken bis zur tatsächlichen `total`,
+// gedeckelt bei `cap` als Sicherheitsgrenze gegen einen Endlos-Export.
+export async function fetchScreenerAll(q: ScreenerQuery, cap = 10_000): Promise<ScreenerListResponse> {
+  const pageSize = 500;
+  const first = await fetchScreener({ ...q, limit: pageSize, offset: 0 });
+  const items = [...first.items];
+  const target = Math.min(first.total, cap);
+  let offset = pageSize;
+  while (items.length < target) {
+    const page = await fetchScreener({ ...q, limit: pageSize, offset });
+    if (page.items.length === 0) break;              // Sicherheitsnetz gegen Endlosschleife
+    items.push(...page.items);
+    offset += pageSize;
+  }
+  return { ...first, items, limit: items.length };
 }
 
 export async function fetchTicker(ticker: string): Promise<ScreenerRowDetail | null> {

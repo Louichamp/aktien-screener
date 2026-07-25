@@ -32,37 +32,57 @@ export default function ScreenerApp() {
   const fullQuery: ScreenerQuery = { ...query, sort_by: sortBy, sort_dir: sortDir, limit, offset };
 
   // Facetten einmalig laden (ändern sich nicht mit Filtern/Pagination).
+  // Ein Fehlschlag löst EINEN automatischen Retry nach 1.5s aus (Serverless-
+  // Cold-Start/DB-Aufwachen sind hier reale, transiente Fehlerquellen, keine
+  // dauerhaften) — und `error` wird bei jedem Versuchsstart erst gelöscht,
+  // sonst bleibt die Seite nach EINEM Hakler für immer auf der Fehleransicht
+  // hängen, obwohl spätere Requests längst wieder funktionieren.
   useEffect(() => {
-    fetchFacets().then(setFacets).catch((e) => {
-      console.error("fetchFacets failed:", e);
-      setError(String(e));
-    });
+    let cancelled = false;
+    const attempt = (isRetry: boolean) => {
+      setError(null);
+      fetchFacets().then((f) => { if (!cancelled) setFacets(f); }).catch((e) => {
+        if (cancelled) return;
+        console.error("fetchFacets failed:", e);
+        if (!isRetry) { setTimeout(() => attempt(true), 1500); return; }
+        setError(String(e));
+      });
+    };
+    attempt(false);
+    return () => { cancelled = true; };
   }, []);
 
   // Zeilen + Summary serverseitig neu holen, sobald sich Query/Sort/Page ändert.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchScreener(fullQuery), fetchSummary(query)])
-      .then(([list, sum]) => {
-        if (cancelled) return;
-        setRows(list.items);
-        setTotal(list.total);
-        setSummary(sum);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        console.error("fetchScreener/fetchSummary failed:", e);
-        setError(String(e));
-      });
+    const attempt = (isRetry: boolean) => {
+      setError(null);
+      Promise.all([fetchScreener(fullQuery), fetchSummary(query)])
+        .then(([list, sum]) => {
+          if (cancelled) return;
+          setRows(list.items);
+          setTotal(list.total);
+          setSummary(sum);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          console.error("fetchScreener/fetchSummary failed:", e);
+          if (!isRetry) { setTimeout(() => attempt(true), 1500); return; }
+          setError(String(e));
+        });
+    };
+    attempt(false);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(fullQuery)]);
 
-  // CSV-Export braucht die volle gefilterte Menge, nicht nur die aktuelle Seite.
+  // CSV-Export braucht die volle gefilterte Menge (nicht nur die aktuelle
+  // Seite) UND dieselbe Sortierung wie auf dem Bildschirm — daher fullQuery
+  // (inkl. sort_by/sort_dir), nicht das sortierungslose `query`.
   useEffect(() => {
-    fetchScreenerAll(query).then((r) => setExportRows(r.items)).catch(() => setExportRows([]));
+    fetchScreenerAll(fullQuery).then((r) => setExportRows(r.items)).catch(() => setExportRows([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(query)]);
+  }, [JSON.stringify(fullQuery)]);
 
   if (error) {
     return (

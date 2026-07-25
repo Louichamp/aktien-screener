@@ -263,12 +263,17 @@ class FMPMarketDataProvider:
         rev_ps = _f(metrics, "revenuePerShareTTM", "revenuePerShare")
         shares = _f(quote, "sharesOutstanding") or (
             (_f(quote, "marketCap") or 0.0) / price if price else None)
+        d2e = _f(ratios, "debtEquityRatioTTM", "debtToEquityTTM")
         fundamentals = {
             "revenue_growth": _f(growth, "revenueGrowth"),
             "eps_growth": _f(growth, "epsgrowth", "epsGrowth"),
             "dividend_yield": _f(ratios, "dividendYieldTTM", "dividendYielPercentageTTM"),
             "net_margin": _f(ratios, "netProfitMarginTTM"),
-            "debt_to_equity": _f(ratios, "debtEquityRatioTTM", "debtToEquityTTM"),
+            "debt_to_equity": d2e,
+            "debt_equity": d2e,          # Alias für Computors (RiskComputor/FundQualityComputor
+                                          # lesen "debt_equity" — ohne Alias fehlte das
+                                          # Leverage-Signal für JEDEN FMP-Titel lautlos;
+                                          # yahoo.py setzt denselben Alias schon länger)
             "pe": _f(ratios, "peRatioTTM", "priceEarningsRatioTTM"),
             "p_b": _f(ratios, "priceToBookRatioTTM", "pbRatioTTM"),
             "p_fcf": _f(ratios, "priceToFreeCashFlowsRatioTTM", "pfcfRatioTTM"),

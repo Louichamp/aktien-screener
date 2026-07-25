@@ -435,6 +435,42 @@ async def test_fmp_fetch_returns_none_on_terminal_4xx():
     assert snap is None
 
 
+async def test_fmp_fetch_maps_debt_equity_alias():
+    """FMP setzte früher nur 'debt_to_equity', aber RiskComputor/FundQualityComputor
+    lesen 'debt_equity' — der fehlende Alias ließ das Leverage-Signal für JEDEN
+    FMP-Titel lautlos ausfallen (compose() renormiert einfach ohne Fehler)."""
+    from infrastructure.providers.fmp import FMPMarketDataProvider
+
+    def router(req: httpx.Request) -> httpx.Response:
+        # base_url enthält "/api/v3" -> Teilstring-Match statt startswith("/profile/").
+        path = req.url.path
+        if "/profile/" in path:
+            return httpx.Response(200, json=[{"price": 100.0}])
+        if "/quote/" in path:
+            return httpx.Response(200, json=[{"price": 100.0, "sharesOutstanding": 1e9}])
+        if "/historical-price-full/" in path:
+            hist = [{"open": 99, "high": 101, "low": 98, "close": 100.0 + i, "volume": 1000}
+                    for i in range(30)]
+            return httpx.Response(200, json={"historical": hist})
+        if "/ratios-ttm/" in path:
+            return httpx.Response(200, json=[{"debtEquityRatioTTM": 1.25}])
+        if "/key-metrics-ttm/" in path:
+            return httpx.Response(200, json=[{}])
+        if "/financial-growth/" in path:
+            return httpx.Response(200, json=[{}])
+        return httpx.Response(404, json=[])
+
+    prov = FMPMarketDataProvider(api_key="TESTKEY")
+    await prov._client.aclose()
+    prov._client = httpx.AsyncClient(base_url=prov.base_url, transport=httpx.MockTransport(router))
+    snap = await prov.fetch("DBGT")
+    await prov.aclose()
+
+    assert snap is not None
+    assert snap.fundamentals["debt_to_equity"] == 1.25
+    assert snap.fundamentals["debt_equity"] == 1.25   # der Alias, der vorher fehlte
+
+
 async def test_indicators_short_series_no_crash():
     """Kurze Kerzenreihe: keine Exception, nur verfügbare Felder."""
     from infrastructure.providers.indicators import technicals_from_candles
