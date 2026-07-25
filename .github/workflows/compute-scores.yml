@@ -12,7 +12,10 @@ name: Compute Scores (Live-API-Architektur)
 on:
   schedule:
     # 06:00 UTC täglich — wie gefordert. 1500 älteste Werte/Lauf deckt ein
-    # 5250er-Universum alle ~3-4 Tage komplett ab (siehe Kostenschätzung).
+    # 5250er-Universum alle ceil(5250/1500)=4 Tage komplett ab (rollierend,
+    # älteste zuerst) — toleriert sogar bis zu 3 komplett ausgefallene Tage in
+    # Folge und bleibt trotzdem unter 7 Tagen maximalem Datenalter
+    # (5250/4 Gute-Tage ≈ 1313 < 1500). Siehe Kostenschätzung.
     - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
@@ -34,7 +37,12 @@ concurrency:
 jobs:
   compute-and-write:
     runs-on: ubuntu-latest
-    timeout-minutes: 90          # kein Frontend-Build hier -> deutlich kürzer als daily-update.yml
+    # 240 statt 90: ein regulärer 1500er-Tageslauf braucht ~50 Min (gemessen),
+    # aber ein manueller refresh=all (volles 5250er-Universum, z.B. für ein
+    # sofortiges Komplett-Update) hochgerechnet ~170-200 Min — 90 Min hätte
+    # ihn mitten im Lauf abgebrochen (Cache+DB-Write laufen erst am Ende,
+    # ein Timeout hätte den gesamten Lauf ergebnislos verworfen).
+    timeout-minutes: 240
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}          # Neon Postgres (asyncpg-URL)
