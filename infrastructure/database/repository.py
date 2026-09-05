@@ -6,9 +6,10 @@ Hysterese zugreift. Der Upsert ist dialekt-bewusst (PostgreSQL bzw. SQLite).
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -99,6 +100,22 @@ def screener_row_to_values(row: ScreenerRow, *, price: float | None = None,
     )
 
 
+def _as_utc(value: Any) -> datetime | None:
+    """Zeitstempel robust nach UTC. PostgreSQL liefert hier ein `datetime`,
+    SQLite (Tests, lokale Läufe) je nach Spaltentyp einen ISO-String — beides
+    muss dieselbe Vergleichslogik durchlaufen."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 class ScreenerRepository:
     """Atomare Persistenz für StatusMemory und ScreenerRow."""
 
@@ -136,6 +153,43 @@ class ScreenerRepository:
 
     async def get_screener_row(self, session: AsyncSession, ticker: str) -> ScreenerRowModel | None:
         return await session.get(ScreenerRowModel, ticker)
+
+    async def find_orphans(self, session: AsyncSession, keep: set[str], *,
+                           older_than_days: int = 60) -> list[str]:
+        """Zeilen, die NICHT mehr im Universum sind und deren Daten alt sind.
+
+        Solche Waisen entstehen, wenn ein Symbol aus dem Universum fällt
+        (Delisting, Umbenennung, Änderung der Listing-Quelle): Sie werden nie
+        wieder beschrieben, behalten ihren alten `data_as_of` für immer und
+        verfälschen so den ausgewiesenen „ältesten Stand". Real gemessen am
+        2026-09-05: Der Lauf schrieb 5086 Zeilen, die DB enthielt 5366 —
+        die Differenz zog den ältesten Stand von 2026-08-23 auf 2026-07-14.
+
+        Nur lesend. Das Löschen entscheidet der Aufrufer (`delete_rows`),
+        weil ein kaputtes Universum sonst die halbe Tabelle mitnehmen könnte.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        rows = (await session.execute(
+            select(ScreenerRowModel.ticker, ScreenerRowModel.data_as_of))).all()
+        out: list[str] = []
+        for ticker, as_of in rows:
+            if ticker in keep:
+                continue
+            stamp = _as_utc(as_of)
+            if stamp is None or stamp < cutoff:   # ohne Datum = nie geschrieben
+                out.append(ticker)
+        return out
+
+    async def delete_rows(self, session: AsyncSession, tickers: list[str]) -> int:
+        """Löscht die genannten Zeilen. Bewusst ohne eigene Sicherheitslogik —
+        der Aufrufer muss die Liste geprüft haben (siehe `find_orphans`)."""
+        if not tickers:
+            return 0
+        await session.execute(
+            delete(StatusMemoryModel).where(StatusMemoryModel.ticker.in_(tickers)))
+        res = await session.execute(
+            delete(ScreenerRowModel).where(ScreenerRowModel.ticker.in_(tickers)))
+        return int(res.rowcount or 0)
 
     async def list_screener_rows(self, session: AsyncSession,
                                  strategy_tag: str | None = None) -> list[ScreenerRowModel]:

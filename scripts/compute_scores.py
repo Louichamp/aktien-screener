@@ -36,10 +36,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import pickle
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,12 +102,72 @@ def _save_cache(path: Path, cache: dict) -> None:
     tmp.replace(path)
 
 
-def _select_oldest(universe_tickers: list[str], cache: dict, n: int) -> list[str]:
-    """Nie beschaffte zuerst, dann nach data_as_of aufsteigend (älteste zuerst)."""
+# --------------------------------------------------------------------------- #
+#  Ausfall-Verfolgung (Backoff für dauerhaft tote Symbole)
+# --------------------------------------------------------------------------- #
+# Ohne das verhungert die Rotation: Ein Ticker, der NIE erfolgreich beschafft
+# wird (delistet, ungültiges Symbol, bei Yahoo nicht vorhanden), behält für
+# immer as_of=None -> sortiert als "" ganz nach vorne -> wird jeden Tag erneut
+# zuerst gewählt, scheitert wieder und belegt dauerhaft einen der 1500 Plätze.
+# Real gemessen am Lauf vom 2026-09-05: von 1500 gewählten Titeln scheiterten
+# 1055; effektiv frisch wurden 445/Tag statt 1500. Dass die Retry-Pässe nur
+# 6 Titel retteten, zeigt, dass es harte Fehler sind und kein Throttling.
+def _load_failures(path: Path) -> dict[str, dict]:
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(v, dict)}
+        except Exception as exc:
+            print(f"Fehlerliste unlesbar ({exc}) — starte leer", flush=True)
+    return {}
+
+
+def _save_failures(path: Path, failures: dict[str, dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(failures, indent=0, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _backoff_days(fails: int) -> int:
+    """Erste zwei Ausfälle ohne Strafe (echtes Throttling darf sich erholen),
+    danach exponentiell bis maximal 30 Tage."""
+    if fails < 3:
+        return 0
+    return min(2 ** (fails - 2), 30)
+
+
+def _in_backoff(rec: dict | None, now: datetime) -> bool:
+    if not rec:
+        return False
+    days = _backoff_days(int(rec.get("fails", 0)))
+    if days <= 0:
+        return False
+    try:
+        last = datetime.fromisoformat(str(rec.get("last", "")))
+    except ValueError:
+        return False
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return now < last + timedelta(days=days)
+
+
+def _select_oldest(universe_tickers: list[str], cache: dict, n: int,
+                   failures: dict[str, dict] | None = None) -> list[str]:
+    """Nie beschaffte zuerst, dann nach data_as_of aufsteigend (älteste zuerst).
+
+    Titel in Backoff werden übersprungen, damit dauerhaft tote Symbole die
+    Plätze nicht blockieren.
+    """
+    failures = failures or {}
+    now = datetime.now(timezone.utc)
+    eligible = [t for t in universe_tickers if not _in_backoff(failures.get(t), now)]
+
     def key(t: str):
         snap = cache.get(t)
         return getattr(snap, "as_of", None) or ""        # "" = nie -> ganz vorne
-    return sorted(universe_tickers, key=key)[:n]
+    return sorted(eligible, key=key)[:n]
 
 
 async def _fetch_batch(provider, batch: list[str], by_sym: dict,
@@ -156,6 +217,11 @@ async def main() -> None:
     # Bewusst fix "statistical" (torch-frei) — s. Modul-Docstring. Kein --forecast-backend
     # Flag, damit niemand aus Versehen echtes Kronos/torch im Free-Runner aktiviert.
     ap.add_argument("--horizon", type=int, default=30)
+    ap.add_argument("--prune-orphans", action="store_true",
+                    help="Zeilen löschen, die nicht mehr im Universum und veraltet sind "
+                         "(ohne das Flag wird nur berichtet)")
+    ap.add_argument("--orphan-age", type=int, default=60,
+                    help="Ab welchem Alter in Tagen eine universumsfremde Zeile als Waise gilt")
     args = ap.parse_args()
 
     try:
@@ -174,9 +240,22 @@ async def main() -> None:
     universe_tickers = list(by_sym)
     universe_set = set(universe_tickers)
 
+    failures_path = cache_path.with_name("fetch_failures.json")
+    failures = _load_failures(failures_path)
+
     refresh_all = str(args.refresh).lower() == "all"
     n = len(universe_tickers) if refresh_all else max(0, int(args.refresh))
-    batch = _select_oldest(universe_tickers, cache, n)
+    # Bei --refresh=all bewusst OHNE Backoff: ein manueller Volllauf soll auch
+    # die zurückgestellten Titel noch einmal versuchen.
+    batch = (_select_oldest(universe_tickers, cache, n)
+             if refresh_all else _select_oldest(universe_tickers, cache, n, failures))
+    now = datetime.now(timezone.utc)
+    skipped = sum(1 for t in universe_tickers if _in_backoff(failures.get(t), now))
+    if skipped:
+        dead = sum(1 for t in universe_tickers
+                   if int(failures.get(t, {}).get("fails", 0)) >= 7)
+        print(f"Backoff: {skipped} Titel zurückgestellt ({dead} davon dauerhaft "
+              f"auffällig, >= 7 Ausfälle)", flush=True)
 
     cached_total = len(cache)
     missing = len([t for t in universe_tickers if t not in cache])
@@ -193,6 +272,24 @@ async def main() -> None:
                                chunk_size=args.chunk)
     if hasattr(provider, "aclose"):
         await provider.aclose()
+
+    # Ausfall-Bilanz fortschreiben: Erfolg löscht den Eintrag, Misserfolg
+    # erhöht den Zähler und setzt damit den Backoff für die nächsten Läufe.
+    now_iso = _now_iso()
+    for tk in batch:
+        if tk in fresh:
+            failures.pop(tk, None)
+        else:
+            rec = failures.get(tk) or {"fails": 0}
+            rec["fails"] = int(rec.get("fails", 0)) + 1
+            rec["last"] = now_iso
+            failures[tk] = rec
+    failures = {t: r for t, r in failures.items() if t in universe_set}
+    _save_failures(failures_path, failures)
+    if batch:
+        print(f"Beschafft: {len(fresh)}/{len(batch)} "
+              f"({len(batch) - len(fresh)} Ausfälle, jetzt {len(failures)} Titel "
+              f"in der Fehlerliste)", flush=True)
 
     cache.update(fresh)
     if len(universe_set) >= max(100, len(cache) // 2):
@@ -221,6 +318,34 @@ async def main() -> None:
     async with sm() as session:
         res = await run_screener_pipeline(list(cache), session, repository=repo,
                                           snapshots=cache, commit=True)
+
+        # Waisen: Zeilen, die nicht mehr im Universum sind und deren Daten alt
+        # sind. Sie werden nie wieder beschrieben und verfälschen den
+        # ausgewiesenen „ältesten Stand". Standardmäßig wird nur BERICHTET —
+        # Löschen ist irreversibel und braucht --prune-orphans.
+        try:
+            orphans = await repo.find_orphans(session, universe_set,
+                                              older_than_days=args.orphan_age)
+        except Exception as exc:
+            orphans = []
+            print(f"Waisen-Prüfung fehlgeschlagen: {exc}", flush=True)
+        if orphans:
+            share = len(orphans) / max(len(cache), 1)
+            print(f"Waisen: {len(orphans)} Zeilen nicht mehr im Universum und "
+                  f"älter als {args.orphan_age} Tage (z. B. {', '.join(orphans[:8])})",
+                  flush=True)
+            if not args.prune_orphans:
+                print("  -> nur gemeldet. Löschen mit --prune-orphans.", flush=True)
+            elif share > 0.2:
+                # Ein kaputtes/verkürztes Universum darf niemals die halbe
+                # Tabelle mitreißen — dieselbe Vorsicht wie beim Cache-Beschnitt.
+                print(f"  -> ABGELEHNT: {share:.0%} der Zeilen betroffen, das "
+                      f"sieht nach kaputtem Universum aus. Nichts gelöscht.",
+                      flush=True)
+            else:
+                n_del = await repo.delete_rows(session, orphans)
+                await session.commit()
+                print(f"  -> {n_del} Waisen gelöscht.", flush=True)
     await engine.dispose()
 
     _save_cache(cache_path, cache)
