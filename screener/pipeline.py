@@ -17,6 +17,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from scoring import InstrumentData, ScoreEngine, ScoringContext
 
+from .base_formation import detect_base
+from .breakout_signal import evaluate_breakout
 from .levels import LevelEngine
 from .row import ScreenerRow, assemble_row
 from .status import (Classification, ClassifierInput, StatusClassifier,
@@ -187,13 +189,58 @@ def _forecast_return(forecast: dict[str, Any] | None, price: float | None) -> fl
 _MAX_ZONES = 15
 
 
-def _build_drivers(scored: Any, plan: Any, cls: Classification) -> dict[str, Any]:
+def _base_and_breakout(s: MarketSnapshot) -> dict[str, Any]:
+    """Struktur-Level (Pivot/Kaufzone/Stopp) + das gemessene Ausbruchssignal.
+
+    Beides ist bewusst getrennt: `base_formation` liefert nur LEVEL, das
+    Kaufsignal kommt aus `breakout_signal` — und dort nur für das Segment und
+    den Horizont, für die eine Vorhersagekraft nachgewiesen wurde. Details und
+    Messergebnisse stehen in den Docstrings der beiden Module.
+    """
+    out: dict[str, Any] = {}
+    candles = s.candles or []
+    if not candles or not s.price:
+        return out
+    try:
+        bo = evaluate_breakout(candles, price=s.price)
+        if bo is not None:
+            out["breakout"] = {
+                "applicable": bo.applicable, "triggered": bo.triggered,
+                "level": bo.breakout_level, "dollar_volume": bo.dollar_volume,
+                "segment": bo.segment, "reason": bo.reason,
+                "horizon": bo.horizon_hint,
+            }
+    except Exception:
+        pass                                   # Signal darf den Lauf nie killen
+    try:
+        t = s.technicals or {}
+        b = detect_base(candles, price=s.price, atr=t.get("atr"),
+                        ema_200=t.get("ema_200"), ema_200_slope=t.get("ema_200_slope"))
+        if b is not None:
+            out["base"] = {
+                "state": b.state, "pivot": b.pivot, "base_low": b.base_low,
+                "depth_pct": b.depth_pct, "length": b.length,
+                "buy_zone_low": b.buy_zone_low, "buy_zone_high": b.buy_zone_high,
+                "stop": b.stop_suggest, "invalidation": b.invalidation,
+                "risk_pct": b.risk_pct, "position_in_base": b.position_in_base,
+                "pivot_tests": b.pivot_tests, "low_rise": b.low_rise,
+                "contraction": b.contraction, "volume_dryup": b.volume_dryup,
+                "dist_to_pivot_pct": b.dist_to_pivot_pct,
+                "rationale": b.rationale,
+            }
+    except Exception:
+        pass
+    return out
+
+
+def _build_drivers(scored: Any, plan: Any, cls: Classification,
+                   snap: MarketSnapshot | None = None) -> dict[str, Any]:
     entry = getattr(plan, "entry_zone", None)
     ranked = sorted(plan.zones, key=lambda z: z.strength, reverse=True)
     top = ranked[:_MAX_ZONES]
     if entry is not None and entry not in top:      # Einstiegszone nie kappen
         top = top[:-1] + [entry] if top else [entry]
-    return {
+    out = {
         "bull": [_driver_dict(d) for d in scored.bull_case(5)],
         "bear": [_driver_dict(d) for d in scored.bear_case(5)],
         "rationale": list(plan.rationale),
@@ -201,6 +248,9 @@ def _build_drivers(scored: Any, plan: Any, cls: Classification) -> dict[str, Any
         # Konfluenzzonen für das Tearsheet (stärkste zuerst), Einstiegszone markiert.
         "zones": [_zone_dict(z, is_entry=(entry is not None and z is entry)) for z in top],
     }
+    if snap is not None:
+        out.update(_base_and_breakout(snap))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -280,7 +330,7 @@ async def run_screener_pipeline(
             row, price=s.price, currency=s.currency or currency_default,
             name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
             dividend_yield=s.fundamentals.get("dividend_yield"),
-            drivers=_build_drivers(scored, plan, cls),
+            drivers=_build_drivers(scored, plan, cls, s),
             forecast_history=_forecast_history(s.forecast),
             price_history=_price_history(s.candles),
             forecast_return=_forecast_return(s.forecast, s.price),
