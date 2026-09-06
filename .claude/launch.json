@@ -1,1 +1,64 @@
-{"version":"0.0.1","configurations":[{"name":"frontend-dev","runtimeExecutable":"npm","runtimeArgs":["--prefix","frontend","run","dev"],"port":3000}]}
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "licht-lernseite",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "D:/Laura_Licht_Lernseite",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5183"
+      ],
+      "port": 5183
+    },
+    {
+      "name": "hofheim-web",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8123",
+        "--directory",
+        "D:/Hofheim3D/web"
+      ],
+      "port": 8123
+    },
+    {
+      "name": "notebooklm-local",
+      "runtimeExecutable": "D:/NotebookLM_Local/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8600",
+        "--app-dir",
+        "D:/NotebookLM_Local"
+      ],
+      "port": 8600
+    },
+    {
+      "name": "screener-api",
+      "runtimeExecutable": "D:/Trade_rian_screener/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "scripts/run_local_api.py"
+      ],
+      "port": 8000
+    }
+  ]
+}

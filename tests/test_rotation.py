@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from scripts.compute_scores import _backoff_days, _in_backoff, _select_oldest
+from scripts.compute_scores import (_backoff_days, _in_backoff,
+                                    _reusable_fundamentals, _select_oldest)
 
 
 @dataclass
@@ -84,3 +85,51 @@ def test_abgelaufener_backoff_wird_wieder_versucht():
 def test_ohne_fehlerliste_unveraendertes_verhalten():
     cache = {"A": _Snap(_iso(5)), "B": _Snap(_iso(2))}
     assert _select_oldest(["A", "B"], cache, 2) == ["A", "B"]
+
+
+# --------------------------------------------------------------------------- #
+#  Wiederverwendung der Stammdaten
+# --------------------------------------------------------------------------- #
+@dataclass
+class _FullSnap:
+    as_of: str | None = None
+    fundamentals_as_of: str | None = None
+    fundamentals: dict | None = None
+    name: str | None = "X Inc."
+    sector: str | None = "Technology"
+    country: str | None = "USA"
+    currency: str | None = "USD"
+    market_cap: float | None = 1e9
+    asset_class: str = "Aktie"
+
+
+def test_frische_stammdaten_werden_uebernommen():
+    """Fundamentaldaten wechseln quartalsweise. Sie taeglich neu zu holen war
+    mit dem Einzelabruf der Historie der Grund fuer ~3000 Anfragen pro Lauf."""
+    cache = {"A": _FullSnap(fundamentals_as_of=_iso(3), fundamentals={"pe": 20.0})}
+    out = _reusable_fundamentals(cache, ["A"], 14)
+    assert "A" in out
+    assert out["A"]["fundamentals"] == {"pe": 20.0}
+    assert out["A"]["meta"]["sector"] == "Technology"
+
+
+def test_alte_stammdaten_werden_neu_geholt():
+    cache = {"A": _FullSnap(fundamentals_as_of=_iso(40), fundamentals={"pe": 20.0})}
+    assert _reusable_fundamentals(cache, ["A"], 14) == {}
+
+
+def test_ohne_fundamentaldaten_keine_uebernahme():
+    cache = {"A": _FullSnap(fundamentals_as_of=_iso(1), fundamentals={})}
+    assert _reusable_fundamentals(cache, ["A"], 14) == {}
+
+
+def test_faellt_auf_as_of_zurueck_wenn_der_neue_stempel_fehlt():
+    """Alte Cache-Eintraege kennen `fundamentals_as_of` noch nicht — sie
+    duerfen deswegen nicht dauerhaft als veraltet gelten."""
+    cache = {"A": _FullSnap(as_of=_iso(2), fundamentals={"pe": 20.0})}
+    assert "A" in _reusable_fundamentals(cache, ["A"], 14)
+
+
+def test_kaputter_zeitstempel_erzwingt_neuabruf():
+    cache = {"A": _FullSnap(fundamentals_as_of="kein-datum", fundamentals={"pe": 1.0})}
+    assert _reusable_fundamentals(cache, ["A"], 14) == {}

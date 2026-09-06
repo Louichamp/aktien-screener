@@ -39,6 +39,10 @@ class MarketSnapshot:
     name: str | None = None
     country: str | None = None
     as_of: str | None = None          # Zeitpunkt der Datenbeschaffung (ISO) — für Rotation/Stand
+    # Wann die Stammdaten (Name/Branche/Fundamentaldaten) zuletzt geholt
+    # wurden. Getrennt von `as_of`, weil Kurse täglich, Fundamentaldaten aber
+    # nur quartalsweise wechseln — siehe scripts/compute_scores.py.
+    fundamentals_as_of: str | None = None
     asset_class: str = "stock"
     sector: str | None = None
     industry: str | None = None
