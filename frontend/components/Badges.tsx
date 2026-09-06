@@ -102,3 +102,36 @@ export function StrategyTag({ tag }: { tag: string | null }) {
     </span>
   );
 }
+
+// ── Signalstärke: wie viele UNABHÄNGIGE Faktoren sich bestätigen ────────────
+// Die Balken sind die Aussage: ein gefüllter Balken heißt „beruht auf einer
+// einzelnen Bedingung", drei heißen „Trend, Momentum, relative Stärke und
+// Volumen zeigen in dieselbe Richtung". Genau diese Unterscheidung fehlte —
+// ein RSI-Ausschlag sah aus wie ein vierfach bestätigter Treffer.
+const SIGNAL_STYLE: Record<string, { bars: number; cls: string; label: string }> = {
+  "stark":   { bars: 3, cls: "text-bull",  label: "stark" },
+  "moderat": { bars: 2, cls: "text-warn",  label: "moderat" },
+  "schwach": { bars: 1, cls: "text-muted", label: "schwach" },
+};
+
+export function SignalBadge(
+  { strength, confirming }: { strength: string | null; confirming?: string[] },
+) {
+  const st = strength ? SIGNAL_STYLE[strength] : undefined;
+  if (!st) return <span className="text-xs text-muted" title="Zu wenig Daten für eine Einstufung">—</span>;
+  const title = confirming?.length
+    ? `${st.label} — bestätigt durch: ${confirming.join(", ")}`
+    : `Signalstärke: ${st.label}`;
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${st.cls}`} title={title}>
+      <span className="flex items-end gap-[2px]" aria-hidden="true">
+        {[1, 2, 3].map((i) => (
+          <span key={i}
+                className={`w-[3px] rounded-sm ${i <= st.bars ? "bg-current" : "bg-current opacity-20"}`}
+                style={{ height: `${4 + i * 3}px` }} />
+        ))}
+      </span>
+      <span className="text-[11px] font-semibold">{st.label}</span>
+    </span>
+  );
+}

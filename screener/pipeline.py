@@ -17,6 +17,10 @@ from typing import Any, Protocol, runtime_checkable
 
 from scoring import InstrumentData, ScoreEngine, ScoringContext
 
+from .base_formation import detect_base
+from .breakout_signal import evaluate_breakout
+from .data_quality import assess as assess_data_quality
+from .explain import build_breakdown
 from .levels import LevelEngine
 from .row import ScreenerRow, assemble_row
 from .status import (Classification, ClassifierInput, StatusClassifier,
@@ -36,6 +40,10 @@ class MarketSnapshot:
     name: str | None = None
     country: str | None = None
     as_of: str | None = None          # Zeitpunkt der Datenbeschaffung (ISO) — für Rotation/Stand
+    # Wann die Stammdaten (Name/Branche/Fundamentaldaten) zuletzt geholt
+    # wurden. Getrennt von `as_of`, weil Kurse täglich, Fundamentaldaten aber
+    # nur quartalsweise wechseln — siehe scripts/compute_scores.py.
+    fundamentals_as_of: str | None = None
     asset_class: str = "stock"
     sector: str | None = None
     industry: str | None = None
@@ -187,13 +195,58 @@ def _forecast_return(forecast: dict[str, Any] | None, price: float | None) -> fl
 _MAX_ZONES = 15
 
 
-def _build_drivers(scored: Any, plan: Any, cls: Classification) -> dict[str, Any]:
+def _base_and_breakout(s: MarketSnapshot) -> dict[str, Any]:
+    """Struktur-Level (Pivot/Kaufzone/Stopp) + das gemessene Ausbruchssignal.
+
+    Beides ist bewusst getrennt: `base_formation` liefert nur LEVEL, das
+    Kaufsignal kommt aus `breakout_signal` — und dort nur für das Segment und
+    den Horizont, für die eine Vorhersagekraft nachgewiesen wurde. Details und
+    Messergebnisse stehen in den Docstrings der beiden Module.
+    """
+    out: dict[str, Any] = {}
+    candles = s.candles or []
+    if not candles or not s.price:
+        return out
+    try:
+        bo = evaluate_breakout(candles, price=s.price)
+        if bo is not None:
+            out["breakout"] = {
+                "applicable": bo.applicable, "triggered": bo.triggered,
+                "level": bo.breakout_level, "dollar_volume": bo.dollar_volume,
+                "segment": bo.segment, "reason": bo.reason,
+                "horizon": bo.horizon_hint,
+            }
+    except Exception:
+        pass                                   # Signal darf den Lauf nie killen
+    try:
+        t = s.technicals or {}
+        b = detect_base(candles, price=s.price, atr=t.get("atr"),
+                        ema_200=t.get("ema_200"), ema_200_slope=t.get("ema_200_slope"))
+        if b is not None:
+            out["base"] = {
+                "state": b.state, "pivot": b.pivot, "base_low": b.base_low,
+                "depth_pct": b.depth_pct, "length": b.length,
+                "buy_zone_low": b.buy_zone_low, "buy_zone_high": b.buy_zone_high,
+                "stop": b.stop_suggest, "invalidation": b.invalidation,
+                "risk_pct": b.risk_pct, "position_in_base": b.position_in_base,
+                "pivot_tests": b.pivot_tests, "low_rise": b.low_rise,
+                "contraction": b.contraction, "volume_dryup": b.volume_dryup,
+                "dist_to_pivot_pct": b.dist_to_pivot_pct,
+                "rationale": b.rationale,
+            }
+    except Exception:
+        pass
+    return out
+
+
+def _build_drivers(scored: Any, plan: Any, cls: Classification,
+                   snap: MarketSnapshot | None = None) -> dict[str, Any]:
     entry = getattr(plan, "entry_zone", None)
     ranked = sorted(plan.zones, key=lambda z: z.strength, reverse=True)
     top = ranked[:_MAX_ZONES]
     if entry is not None and entry not in top:      # Einstiegszone nie kappen
         top = top[:-1] + [entry] if top else [entry]
-    return {
+    out = {
         "bull": [_driver_dict(d) for d in scored.bull_case(5)],
         "bear": [_driver_dict(d) for d in scored.bear_case(5)],
         "rationale": list(plan.rationale),
@@ -201,6 +254,60 @@ def _build_drivers(scored: Any, plan: Any, cls: Classification) -> dict[str, Any
         # Konfluenzzonen für das Tearsheet (stärkste zuerst), Einstiegszone markiert.
         "zones": [_zone_dict(z, is_entry=(entry is not None and z is entry)) for z in top],
     }
+    if snap is not None:
+        out.update(_base_and_breakout(snap))
+    return out
+
+
+# Wie viele Zeilen pro Anweisung geschrieben werden. PostgreSQL erlaubt 65535
+# Parameter je Statement; bei ~28 Spalten sind gut 2300 Zeilen möglich — 200
+# hält Abstand und begrenzt zugleich, wie viel ein Fehlschlag zurückwirft.
+_WRITE_CHUNK = 200
+
+
+async def _write_back(db_session: Any, repository: Any,
+                      pending: list[tuple[str, dict[str, Any], Any, Any]],
+                      rows: list[ScreenerRow], errors: dict[str, str]) -> None:
+    """Ergebnisse schreiben — gebündelt, aber ohne die Fehlerisolierung zu verlieren.
+
+    Der Write-Back lief zuvor Zeile für Zeile in je eigener SAVEPOINT-Klammer:
+    rund vier Netzwerk-Roundtrips pro Titel. Gemessen am Lauf vom 2026-09-05
+    betrug die reine Rechenzeit für 5086 Titel 2,5 Minuten, der Lauf dauerte
+    84 — der Rest war Warten auf die Datenbank.
+
+    Die Isolierung bleibt trotzdem erhalten: Scheitert ein Block, wird
+    ausschließlich DIESER Block noch einmal einzeln geschrieben. Damit kostet
+    ein kaputter Datensatz einen Block statt des ganzen Laufs — und der
+    Normalfall kostet einen Roundtrip statt vierhundert.
+    """
+    bulk = (hasattr(repository, "upsert_screener_rows")
+            and hasattr(repository, "upsert_status_memories"))
+
+    async def one_by_one(batch: list[tuple[str, dict[str, Any], Any, Any]]) -> None:
+        for tk, values, row, memory in batch:
+            try:
+                async with db_session.begin_nested():
+                    await repository.upsert_screener_row(db_session, values)
+                    await repository.upsert_status_memory(db_session, tk, memory)
+                rows.append(row)
+            except Exception as exc:           # ein Ticker darf den Lauf nie killen
+                errors[tk] = f"writeback: {exc}"
+
+    if not bulk:
+        await one_by_one(pending)
+        return
+
+    for i in range(0, len(pending), _WRITE_CHUNK):
+        chunk = pending[i:i + _WRITE_CHUNK]
+        try:
+            async with db_session.begin_nested():
+                await repository.upsert_screener_rows(db_session, [v for _, v, _, _ in chunk])
+                await repository.upsert_status_memories(
+                    db_session, [(tk, m) for tk, _, _, m in chunk])
+            rows.extend(row for _, _, row, _ in chunk)
+        except Exception:
+            # Welcher Datensatz es war, weiss nur der Einzelversuch.
+            await one_by_one(chunk)
 
 
 # --------------------------------------------------------------------------- #
@@ -219,6 +326,7 @@ async def run_screener_pipeline(
     strategy_engine: StrategyEngine | None = None,
     currency_default: str = "USD",
     commit: bool = True,
+    metrics: Any | None = None,
 ) -> PipelineResult:
     from infrastructure.database import screener_row_to_values
 
@@ -241,8 +349,14 @@ async def run_screener_pipeline(
             snaps[tk] = s
         except Exception as exc:
             errors[tk] = f"ingest: {exc}"
-    memories = {tk: (await repository.get_status_memory(db_session, tk) or StatusMemory())
-                for tk in snaps}
+    # Hysterese gebündelt lesen, wenn das Repository es kann — sonst wie
+    # bisher einzeln (Stub-Repositories in Tests haben die Methode nicht).
+    if hasattr(repository, "get_status_memories"):
+        loaded = await repository.get_status_memories(db_session, list(snaps))
+        memories = {tk: loaded.get(tk) or StatusMemory() for tk in snaps}
+    else:
+        memories = {tk: (await repository.get_status_memory(db_session, tk) or StatusMemory())
+                    for tk in snaps}
 
     # --- Phase 1: Scoring (geteilter Kontext) + Zonen/Level + Status ----------
     instruments = [_instrument_data(s) for s in snaps.values()]
@@ -256,6 +370,9 @@ async def run_screener_pipeline(
             cinp = ClassifierInput(s.instrument_id, tk, scored, plan, _technical_state(s), s.forecast)
             cls = classifier.classify(cinp, memories[tk])
             per[tk] = {"scored": scored, "plan": plan, "cinp": cinp, "cls": cls, "snap": s}
+            if metrics is not None:
+                metrics.scores_computed += sum(1 for r in scored.results.values()
+                                               if getattr(r, "ok", False))
         except Exception as exc:
             errors[tk] = f"phase1: {exc}"
 
@@ -272,27 +389,52 @@ async def run_screener_pipeline(
     # TruncationError bei einem 166-Zeichen-Namen brach 3 Tage in Folge den
     # kompletten täglichen Cron-Lauf, kein einziger Ticker wurde geschrieben).
     rows: list[ScreenerRow] = []
+    pending: list[tuple[str, dict[str, Any], ScreenerRow, Any]] = []
     for tk, d in per.items():
         scored, plan, cinp, cls, s = d["scored"], d["plan"], d["cinp"], d["cls"], d["snap"]
         assignment = assignments.get(s.instrument_id)
         row = assemble_row(cinp, cls, assignment)
-        values = screener_row_to_values(
-            row, price=s.price, currency=s.currency or currency_default,
-            name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
-            dividend_yield=s.fundamentals.get("dividend_yield"),
-            drivers=_build_drivers(scored, plan, cls),
-            forecast_history=_forecast_history(s.forecast),
-            price_history=_price_history(s.candles),
-            forecast_return=_forecast_return(s.forecast, s.price),
-            forecast_method=(s.forecast or {}).get("method"),
-            data_as_of=s.as_of)
+        # Nutzt ausschliesslich bereits berechnete Sub-Scores — kein neuer Aufwand.
+        bd = build_breakdown(scored, score_engine.composites, score_engine.computors)
+        # Belastbarkeit der Datengrundlage — trennt einen Score aus voller
+        # Historie von einem gleich aussehenden aus Bruchstuecken.
         try:
-            async with db_session.begin_nested():
-                await repository.upsert_screener_row(db_session, values)
-                await repository.upsert_status_memory(db_session, tk, cls.memory)
-            rows.append(row)
-        except Exception as exc:                   # ein Ticker darf den Lauf nie killen
-            errors[tk] = f"writeback: {exc}"
+            dq = assess_data_quality(s.candles, s.technicals, s.fundamentals,
+                                     as_of=s.as_of)
+        except Exception:
+            dq = None
+        if metrics is not None:
+            # Vollstaendig heisst: fast alle Faktoren lagen mit echten Daten vor.
+            # Ein Score auf halber Datenlage darf in der Statistik nicht wie ein
+            # vollstaendiger aussehen — genau das war bisher unsichtbar.
+            if scored.technical_rating is None:
+                metrics.score_none += 1
+            elif bd.coverage >= 0.9:
+                metrics.score_full += 1
+            else:
+                metrics.score_partial += 1
+        try:
+            values = screener_row_to_values(
+                row, price=s.price, currency=s.currency or currency_default,
+                name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
+                dividend_yield=s.fundamentals.get("dividend_yield"),
+                drivers=_build_drivers(scored, plan, cls, s),
+                score_breakdown={**bd.to_dict(),
+                                 "data_quality": dq.to_dict() if dq else None},
+                signal_strength=bd.signal_strength,
+                data_quality=(dq.score if dq else None),
+                data_quality_label=(dq.label if dq else None),
+                forecast_history=_forecast_history(s.forecast),
+                price_history=_price_history(s.candles),
+                forecast_return=_forecast_return(s.forecast, s.price),
+                forecast_method=(s.forecast or {}).get("method"),
+                data_as_of=s.as_of)
+        except Exception as exc:
+            errors[tk] = f"serialisierung: {exc}"
+            continue
+        pending.append((tk, values, row, cls.memory))
+
+    await _write_back(db_session, repository, pending, rows, errors)
 
     if commit:
         await db_session.commit()

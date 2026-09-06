@@ -13,6 +13,7 @@
 
 import type {
   Facets,
+  ScreenerRow,
   NewsResponse,
   ScreenerListResponse,
   ScreenerQuery,
@@ -44,6 +45,8 @@ function buildQuery(q: ScreenerQuery): string {
   set("max_risk_level", q.max_risk_level);
   set("tickers", q.tickers);
   if (q.rare_only) sp.set("rare_only", "true");
+  set("min_signal", q.min_signal);
+  set("min_data_quality", q.min_data_quality);
   set("sort_by", q.sort_by);
   set("sort_dir", q.sort_dir);
   sp.set("limit", String(q.limit ?? 25));
@@ -57,8 +60,11 @@ export async function fetchScreener(q: ScreenerQuery): Promise<ScreenerListRespo
   return res.json();
 }
 
+// Facetten aendern sich nur nach einem Pipeline-Lauf. `no-store` hier hiess:
+// jeder Seitenwechsel holt dieselbe Liste erneut. Der Cache-Control-Header des
+// Backends (private, 10 min) darf jetzt greifen.
 export async function fetchFacets(): Promise<Facets> {
-  const res = await fetch(`${API_BASE}/api/v1/screener/facets`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE}/api/v1/screener/facets`);
   if (!res.ok) throw new Error(`Facetten fehlgeschlagen: ${res.status}`);
   return res.json();
 }
@@ -71,31 +77,50 @@ export async function fetchSummary(q: ScreenerQuery): Promise<Summary> {
 }
 
 // Für den CSV-Export: holt ALLE zur Filterung passenden Zeilen, nicht nur eine
-// Seite. api/routes.py deckelt `limit` hart auf 500 (Performance-Schutz für
-// den normalen Listen-Endpoint) — ein einzelner fetchScreener-Call kappte den
-// Export bisher STILL bei 500 Zeilen (ohne Hinweis, in Backend-Standard-
-// Sortierung statt der auf dem Bildschirm gewählten). Bei einem 5250er-
-// Universum ist "alles exportieren" ohne Filter ein sehr realistischer
-// Auslöser. Paginiert jetzt in 500er-Blöcken bis zur tatsächlichen `total`,
-// gedeckelt bei `cap` als Sicherheitsgrenze gegen einen Endlos-Export.
-export async function fetchScreenerAll(q: ScreenerQuery, cap = 10_000): Promise<ScreenerListResponse> {
+// Seite. api/routes.py deckelt `limit` hart auf 500 (Performance-Schutz für den
+// normalen Listen-Endpoint) — ein einzelner fetchScreener-Call kappte den Export
+// still bei 500 Zeilen, in Backend-Sortierung statt der auf dem Bildschirm
+// gewählten.
+//
+// Wird NUR beim Klick auf „CSV" aufgerufen (ScreenerBoard). Früher lief das
+// vorsorglich bei jeder Filter-/Sortier-/Seitenänderung im Hintergrund.
+//
+// Die Folgeseiten laufen PARALLEL: Nach der ersten Antwort ist `total` bekannt,
+// also stehen alle Offsets fest. Sequenziell kostete ein 5366-Zeilen-Export
+// 11 × Round-Trip (~18 s gemessen); parallel ist es effektiv ein Round-Trip.
+// `concurrency` begrenzt die gleichzeitigen Anfragen, damit ein großer Export
+// die Serverless-Funktion nicht überfährt.
+export async function fetchScreenerAll(
+  q: ScreenerQuery, cap = 10_000, concurrency = 4,
+): Promise<ScreenerListResponse> {
   const pageSize = 500;
   const first = await fetchScreener({ ...q, limit: pageSize, offset: 0 });
-  const items = [...first.items];
   const target = Math.min(first.total, cap);
-  let offset = pageSize;
-  while (items.length < target) {
-    const page = await fetchScreener({ ...q, limit: pageSize, offset });
-    if (page.items.length === 0) break;              // Sicherheitsnetz gegen Endlosschleife
-    items.push(...page.items);
-    offset += pageSize;
-  }
+  if (first.items.length >= target) return { ...first, limit: first.items.length };
+
+  const offsets: number[] = [];
+  for (let o = pageSize; o < target; o += pageSize) offsets.push(o);
+
+  const pages: ScreenerRow[][] = new Array(offsets.length);
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= offsets.length) return;
+      const page = await fetchScreener({ ...q, limit: pageSize, offset: offsets[i] });
+      pages[i] = page.items;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, offsets.length) }, worker));
+
+  const items = [...first.items, ...pages.flat().filter(Boolean)];
   return { ...first, items, limit: items.length };
 }
 
 export async function fetchTicker(ticker: string): Promise<ScreenerRowDetail | null> {
-  const res = await fetch(`${API_BASE}/api/v1/screener/${encodeURIComponent(ticker)}`,
-    { cache: "no-store" });
+  // Tearsheets aendern sich einmal taeglich — Zurueck/Vor zwischen Aktien soll
+  // nicht jedes Mal die Datenbank treffen (Backend-Header: private, 5 min).
+  const res = await fetch(`${API_BASE}/api/v1/screener/${encodeURIComponent(ticker)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Detail fehlgeschlagen: ${res.status}`);
   return res.json();

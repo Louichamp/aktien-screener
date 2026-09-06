@@ -209,17 +209,35 @@ async def main() -> None:
     ap.add_argument("--horizons", default="21,63,126", help="Vorwärtsrendite-Horizonte in Bars")
     ap.add_argument("--period", default="2y", help="Yahoo-Historie")
     ap.add_argument("--concurrency", type=int, default=8)
+    ap.add_argument("--from-cache", default=None,
+                    help="Pickle mit {ticker: [Candle]} statt Yahoo-Abruf "
+                         "(z.B. .cache/backtest_candles_12y.pkl) — netzfrei "
+                         "und reproduzierbar")
     ap.add_argument("--out", default=str(ROOT / "data" / "signal_ic.json"))
     args = ap.parse_args()
 
-    from infrastructure.providers import build_universe
-    universe = await build_universe(source="broad")
-    universe = universe[: args.sample]
     horizons = [int(h) for h in args.horizons.split(",")]
 
-    print(f"Hole Kerzen für {len(universe)} Titel (Period {args.period}) …", file=sys.stderr)
-    candle_data = await _fetch_candles(universe, period=args.period, concurrency=args.concurrency)
-    print(f"  {len(candle_data)} Titel mit ≥300 Bars verwendbar.", file=sys.stderr)
+    if args.from_cache:
+        # Netzfreier Weg: dieselben Kerzen wie der Backtest, damit
+        # Kalibrierung und Validierung auf derselben Grundlage laufen.
+        import pickle
+        with open(args.from_cache, "rb") as fh:
+            store = pickle.load(fh)
+        candle_data = {tk: {"candles": c, "sector": None, "industry": None,
+                            "market_cap": None}
+                       for tk, c in list(store.items())[: args.sample]
+                       if len(c) >= 300}
+        print(f"  {len(candle_data)} Titel aus {args.from_cache}", file=sys.stderr)
+    else:
+        from infrastructure.providers import build_universe
+        universe = await build_universe(args.sample, source="broad")
+        universe = universe[: args.sample]
+        print(f"Hole Kerzen für {len(universe)} Titel (Period {args.period}) …",
+              file=sys.stderr)
+        candle_data = await _fetch_candles(universe, period=args.period,
+                                           concurrency=args.concurrency)
+        print(f"  {len(candle_data)} Titel mit ≥300 Bars verwendbar.", file=sys.stderr)
     if len(candle_data) < 20:
         print("FEHLER: zu wenig Historie für belastbare IC-Schätzung.", file=sys.stderr)
         raise SystemExit(1)

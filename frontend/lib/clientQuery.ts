@@ -7,7 +7,7 @@ import type { ScreenerQuery } from "./types";
 
 export function queryFromParams(p: URLSearchParams): ScreenerQuery {
   const numKeys = new Set(["min_total_score", "min_dividend_yield", "max_risk_level",
-    "min_wlatar", "min_wlafar", "limit", "offset"]);
+    "min_wlatar", "min_wlafar", "limit", "offset", "min_data_quality"]);
   const boolKeys = new Set(["rare_only"]);
   const q: Record<string, unknown> = {};
   p.forEach((v, k) => {

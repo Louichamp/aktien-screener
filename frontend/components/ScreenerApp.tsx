@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { fetchFacets, fetchScreener, fetchScreenerAll, fetchSummary } from "@/lib/api";
+import { fetchFacets, fetchScreener, fetchSummary } from "@/lib/api";
 import { queryFromParams } from "@/lib/clientQuery";
 import { fmtAge, fmtDate } from "@/lib/format";
 import type { Facets, ScreenerQuery, ScreenerRow, SortBy, SortDir, Summary } from "@/lib/types";
@@ -21,7 +21,6 @@ export default function ScreenerApp() {
   const [facets, setFacets] = useState<Facets | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [total, setTotal] = useState(0);
-  const [exportRows, setExportRows] = useState<ScreenerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const query: ScreenerQuery = useMemo(() => queryFromParams(params), [params]);
@@ -76,14 +75,12 @@ export default function ScreenerApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(fullQuery)]);
 
-  // CSV-Export braucht die volle gefilterte Menge (nicht nur die aktuelle
-  // Seite) UND dieselbe Sortierung wie auf dem Bildschirm — daher fullQuery
-  // (inkl. sort_by/sort_dir), nicht das sortierungslose `query`.
-  useEffect(() => {
-    fetchScreenerAll(fullQuery).then((r) => setExportRows(r.items)).catch(() => setExportRows([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(fullQuery)]);
-
+  // Der CSV-Export holt seine Daten ERST BEIM KLICK (ScreenerBoard).
+  // Vorher lief hier bei jeder Filter-, Sortier- und Seitenänderung ein
+  // fetchScreenerAll über das gesamte gefilterte Universum: bei 5366 Titeln
+  // sind das 11 SEQUENZIELLE Seiten à 500 Zeilen — gemessen ~18 s und 3,8 MB
+  // Hintergrundverkehr pro Interaktion, für einen Download, den man selten
+  // auslöst. Die Daten wurden zusätzlich komplett im Browser-State gehalten.
   if (error) {
     return (
       <div className="rounded-lg border border-bear/40 bg-bear/10 p-6 text-bear">
@@ -114,7 +111,7 @@ export default function ScreenerApp() {
 
       <FilterBar facets={facets} />
       <SummaryStrip summary={summary} />
-      <ScreenerBoard rows={rows} exportRows={exportRows} />
+      <ScreenerBoard rows={rows} exportQuery={fullQuery} exportTotal={total} />
       <Pagination total={total} limit={limit} offset={offset} />
     </div>
   );

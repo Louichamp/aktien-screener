@@ -8,6 +8,7 @@ import type { NewsItem, ScreenerRowDetail } from "@/lib/types";
 import { fmtPrice, totalColor, fmtDate, fmtAge, ageColor } from "@/lib/format";
 import { RecommendationBadge } from "@/components/Badges";
 import KronosForecast from "@/components/tearsheet/KronosForecast";
+import ScoreBreakdownPanel from "@/components/tearsheet/ScoreBreakdown";
 import TechnicalDashboard from "@/components/tearsheet/TechnicalDashboard";
 import FundamentalData from "@/components/tearsheet/FundamentalData";
 import BullBearMemo from "@/components/tearsheet/BullBearMemo";
@@ -96,6 +97,19 @@ export default function AssetView() {
         </div>
       </header>
 
+      {row.rating === "UNKLAR" && (
+        <p className="mt-4 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+          Für diesen Wert wird bewusst KEINE Handlungsempfehlung ausgesprochen:
+          Die Datengrundlage ({row.data_quality ?? "—"}/100) reicht dafür nicht
+          aus. Der Score selbst ist ehrlich berechnet — er beruht nur auf
+          weniger, als er vermuten lässt.
+        </p>
+      )}
+
+      <div className="py-6">
+        <ScoreBreakdownPanel breakdown={row.score_breakdown} total={row.total_score} />
+      </div>
+      <div className="rule" />
       <div className="py-6"><KronosForecast row={row} /></div>
       <div className="rule" />
       <div className="grid grid-cols-1 gap-8 py-6 lg:grid-cols-2">

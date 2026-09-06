@@ -144,6 +144,146 @@ class YahooMarketDataProvider:
                 return None
 
     # ------------------------------------------------------------------ #
+    #  Gebündelter Abruf
+    # ------------------------------------------------------------------ #
+    def _history_batch_sync(self, tickers: list[str]) -> dict[str, list[Candle]]:
+        """Kurshistorie für VIELE Ticker in einer Anfrage.
+
+        `fetch()` macht pro Titel zwei Anfragen (history + info). Bei 1500
+        Titeln je Lauf sind das 3000 Einzelanfragen — genau das hat Yahoo
+        gedrosselt: Im Lauf vom 2026-09-05 kamen 445 von 1500 durch, und die
+        beiden Retry-Pässe retteten zusammen 6 Titel. `yf.download` holt
+        dieselbe Historie für einen ganzen Block in EINER Anfrage.
+        """
+        import pandas as pd
+        import yfinance as yf
+
+        if not tickers:
+            return {}
+        df = yf.download(tickers, period=self.period, interval="1d",
+                         auto_adjust=True, progress=False, group_by="ticker",
+                         threads=True)
+        out: dict[str, list[Candle]] = {}
+        if df is None or len(df) == 0:
+            return out
+        single = len(tickers) == 1
+        for tk in tickers:
+            try:
+                sub = df if single else df[tk]
+                sub = sub.dropna(how="all")
+            except (KeyError, TypeError):
+                continue
+            if sub is None or len(sub) < 2:
+                continue
+            candles: list[Candle] = []
+            for row in sub.itertuples(index=False):
+                o, h, l, c, v = (_f(getattr(row, "Open", None)), _f(getattr(row, "High", None)),
+                                 _f(getattr(row, "Low", None)), _f(getattr(row, "Close", None)),
+                                 _f(getattr(row, "Volume", None)))
+                if None in (o, h, l, c):
+                    continue
+                candles.append(Candle(o, h, l, c, v or 0.0))
+            if len(candles) >= 2:
+                out[tk] = candles
+        return out
+
+    async def fetch_many(self, tickers: list[str], *,
+                         chunk_size: int = 50,
+                         reuse_fundamentals: dict[str, dict] | None = None,
+                         metrics: Any | None = None,
+                         ) -> dict[str, MarketSnapshot]:
+        """Beschafft einen ganzen Block. Historie gebündelt, Stammdaten nur
+        dort einzeln, wo keine brauchbaren aus einem früheren Lauf vorliegen.
+
+        `reuse_fundamentals`: {ticker: {"fundamentals": {...}, "meta": {...}}}
+        aus dem Snapshot-Cache. Fundamentaldaten ändern sich quartalsweise,
+        nicht täglich — sie jeden Tag erneut zu holen war der zweite Grund für
+        die 3000 Anfragen. Der Aufrufer entscheidet, was noch frisch genug ist.
+        """
+        reuse = reuse_fundamentals or {}
+        out: dict[str, MarketSnapshot] = {}
+
+        for i in range(0, len(tickers), chunk_size):
+            chunk = tickers[i:i + chunk_size]
+            if metrics is not None:
+                metrics.provider_batch_calls += 1
+            try:
+                hist = await asyncio.to_thread(self._history_batch_sync, chunk)
+            except Exception as exc:
+                log.warning("yahoo Block-Download fehlgeschlagen (%d Titel): %s",
+                            len(chunk), exc)
+                hist = {}
+
+            need_info = [t for t in hist if t not in reuse]
+
+            async def one_info(tk: str) -> tuple[str, dict]:
+                async with self._sem:
+                    try:
+                        return tk, await asyncio.to_thread(self._info_sync, tk)
+                    except Exception:
+                        return tk, {}
+
+            infos: dict[str, dict] = {}
+            if metrics is not None:
+                metrics.provider_info_calls += len(need_info) if self.with_fundamentals else 0
+                metrics.fundamentals_reused += sum(1 for t in hist if t in reuse)
+            if self.with_fundamentals and need_info:
+                for tk, info in await asyncio.gather(*(one_info(t) for t in need_info)):
+                    infos[tk] = info
+
+            for tk, candles in hist.items():
+                cached = reuse.get(tk) or {}
+                info = infos.get(tk, {})
+                snap = self._assemble(tk, candles, info, cached)
+                if snap is not None:
+                    out[tk] = snap
+        return out
+
+    def _info_sync(self, ticker: str) -> dict[str, Any]:
+        import yfinance as yf
+        try:
+            return yf.Ticker(ticker).get_info() or {}
+        except Exception as exc:
+            log.debug("yahoo info %s nicht verfügbar: %s", ticker, exc)
+            return {}
+
+    def _assemble(self, ticker: str, candles: list[Candle], info: dict[str, Any],
+                  cached: dict[str, Any]) -> MarketSnapshot | None:
+        """Snapshot aus Kerzen + (frischen oder übernommenen) Stammdaten."""
+        if not candles:
+            return None
+        meta = cached.get("meta") or {}
+        fundamentals = (self._fundamentals(info) if info
+                        else dict(cached.get("fundamentals") or {}))
+        price = _f(info.get("currentPrice")) or candles[-1].c
+        if not price or price <= 0:
+            return None
+        technicals = technicals_from_candles(candles, price=price)
+        kept = candles[-self.keep_candles:] if (
+            self.keep_candles and len(candles) > self.keep_candles) else candles
+        avg_vol = _f(info.get("averageVolume"))
+        if avg_vol is None and candles:
+            # Ohne frische Stammdaten aus den Kerzen selbst ableiten, statt das
+            # Liquiditäts-Feld leer zu lassen — der StatusClassifier nutzt es
+            # als Ausschlusskriterium.
+            recent = candles[-20:]
+            avg_vol = sum(c.v for c in recent) / len(recent)
+        return MarketSnapshot(
+            instrument_id=ticker, ticker=ticker,
+            name=(info.get("longName") or info.get("shortName")
+                  or meta.get("name") or ticker),
+            country=info.get("country") or meta.get("country"),
+            asset_class=_QUOTE_TYPE.get(info.get("quoteType", ""),
+                                        meta.get("asset_class") or "Aktie"),
+            sector=info.get("sector") or meta.get("sector"),
+            industry=info.get("industry") or meta.get("industry"),
+            market_cap=_f(info.get("marketCap")) or meta.get("market_cap"),
+            currency=info.get("currency") or meta.get("currency") or "USD",
+            price=price, technicals=technicals, fundamentals=fundamentals,
+            candles=kept,
+            avg_dollar_volume=(avg_vol * price) if avg_vol else None)
+
+    # ------------------------------------------------------------------ #
     def _news_sync(self, ticker: str, limit: int) -> list[dict[str, Any]]:
         import yfinance as yf
 

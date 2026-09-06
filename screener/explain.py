@@ -1,0 +1,212 @@
+"""Nachvollziehbarkeit des Gesamtscores: Aufschlüsselung und Signalstärke.
+
+Die Score-Engine rechnet 13 Sub-Scores, von denen bisher NUR die beiden
+verdichteten Kennzahlen (`wlatar`, `wlafar`) und der daraus abgeleitete
+`total_score` in der Datenbank landeten. Die Einzelwerte wurden nach jedem
+Lauf verworfen — die Frage „warum 87?" war aus den gespeicherten Daten
+schlicht nicht beantwortbar.
+
+Dieses Modul verdichtet dieselben, ohnehin bereits berechneten Ergebnisse zu
+zwei gespeicherten Feldern:
+
+  score_breakdown  — je Faktor: Wert, Gewicht, Beitrag zum Gesamtscore
+  signal_strength  — wie viele UNABHÄNGIGE Faktoren sich bestätigen
+
+Zur Signalstärke: Sie beantwortet die Frage, ob ein Treffer auf einer
+einzelnen Bedingung beruht oder auf mehreren, die sich gegenseitig stützen.
+Ein RSI unter 30 allein ist kein Kaufgrund — erst wenn Trend, Momentum,
+relative Stärke und Volumen in dieselbe Richtung zeigen, wird daraus ein
+belastbarer Treffer. Genau das macht diese Einstufung sichtbar, statt sie
+dem Betrachter zu überlassen.
+
+Kein neuer Rechenaufwand: Alle Werte liegen zum Zeitpunkt des Aufrufs
+bereits vor.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+# Unabhängige Faktor-GRUPPEN, nicht einzelne Faktoren.
+#
+# Die erste Fassung zählte trend, momentum, rel_strength und volume als vier
+# unabhängige Bestätigungen. Die Messung am Querschnitt (scripts/audit_scores.py,
+# 318 S&P- und 464 Small/Mid-Titel) widerlegt das deutlich:
+#
+#   rel_strength <-> market_leadership   0,92
+#   volume       <-> institutional_demand 0,90
+#   trend        <-> momentum             0,86
+#   rel_strength <-> momentum             0,83
+#   trend        <-> rel_strength         0,82
+#
+# Acht Faktoren enthalten effektiv nur ~4,2 bis 4,7 unabhängige Signale. Drei
+# der vier vermeintlich eigenständigen Bestätigungen gehören demselben Cluster
+# an: Eine Aktie in einem intakten Aufwärtstrend "bestätigt" sich dadurch
+# automatisch dreifach, ohne dass eine zweite Informationsquelle hinzukäme.
+#
+# Deshalb zählt jetzt EINE Bestätigung je Gruppe. Die Gruppierung stammt aus
+# der gemessenen Korrelationsstruktur, die in beiden Universen identisch
+# ausfiel — sie ist damit eine strukturelle Eigenschaft der Faktoren, keine
+# Anpassung an eine bestimmte Stichprobe.
+FACTOR_GROUPS: dict[str, tuple[str, ...]] = {
+    "Trendstärke": ("trend", "momentum", "rel_strength", "market_leadership"),
+    "Volumen": ("volume", "institutional_demand"),
+    "Ausbruchslage": ("breakout",),
+    "Einstiegslage": ("setup",),
+}
+
+CONFIRM_AT = 6.5          # ab diesem Sub-Score (0..10) gilt ein Faktor als bestätigend
+CONTRA_AT = 4.0           # darunter spricht er aktiv dagegen
+# Unter dieser technischen Abdeckung wird keine Signalstärke mehr behauptet.
+MIN_COVERAGE_FOR_SIGNAL = 0.6
+
+
+class SignalStrength:
+    STRONG = "stark"
+    MODERATE = "moderat"
+    WEAK = "schwach"
+    NONE = "kein Signal"
+
+
+@dataclass(slots=True)
+class Component:
+    slug: str
+    label: str
+    score: float              # 0..100 (anzeigefreundlich)
+    weight: float             # Anteil am jeweiligen Composite
+    contribution: float       # Beitrag in Punkten des Composites
+    state: str | None = None
+    available: bool = True
+
+
+@dataclass(slots=True)
+class Breakdown:
+    technical: list[Component] = field(default_factory=list)
+    fundamental: list[Component] = field(default_factory=list)
+    signal_strength: str = SignalStrength.NONE
+    confirming: list[str] = field(default_factory=list)
+    contradicting: list[str] = field(default_factory=list)
+    coverage: float = 0.0             # Anteil des Gewichts mit echten Daten
+    note: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        def c(x: Component) -> dict[str, Any]:
+            return {"slug": x.slug, "label": x.label, "score": x.score,
+                    "weight": x.weight, "contribution": x.contribution,
+                    "state": x.state, "available": x.available}
+        return {
+            "technical": [c(x) for x in self.technical],
+            "fundamental": [c(x) for x in self.fundamental],
+            "signal_strength": self.signal_strength,
+            "confirming": list(self.confirming),
+            "contradicting": list(self.contradicting),
+            "coverage": round(self.coverage, 3),
+            "note": self.note,
+        }
+
+
+def _label_map(computors: list[Any] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for comp in computors or []:
+        slug = getattr(comp, "slug", None)
+        if slug:
+            out[slug] = getattr(comp, "label", None) or slug
+    return out
+
+
+def _components(results: dict[str, Any], weights: dict[str, float],
+                labels: dict[str, str]) -> tuple[list[Component], float]:
+    """Faktoren eines Composites + Datenabdeckung.
+
+    Fehlende Faktoren werden MITGEFÜHRT (available=False), statt sie zu
+    verschweigen: Ein Score, der auf halber Datenlage beruht, muss als solcher
+    erkennbar sein — sonst sieht er genauso präzise aus wie ein vollständiger.
+    """
+    total_w = sum(weights.values()) or 1.0
+    present_w = 0.0
+    out: list[Component] = []
+    for slug, w in sorted(weights.items(), key=lambda kv: -kv[1]):
+        res = results.get(slug)
+        ok = res is not None and getattr(res, "ok", False)
+        raw_score = float(getattr(res, "score", 0.0)) if ok else 0.0
+        if ok:
+            present_w += w
+        out.append(Component(
+            slug=slug, label=labels.get(slug, slug),
+            score=round(raw_score * 10.0, 1) if ok else 0.0,
+            weight=round(w / total_w, 4),
+            contribution=round(raw_score * 10.0 * (w / total_w), 1) if ok else 0.0,
+            state=getattr(res, "state", None) if ok else None,
+            available=ok))
+    return out, present_w / total_w
+
+
+def _group_score(results: dict[str, Any], slugs: tuple[str, ...]) -> float | None:
+    """Aussage einer Faktor-Gruppe = Mittel ihrer verfügbaren Mitglieder.
+
+    Innerhalb einer Gruppe sind die Faktoren hoch korreliert; ihr Mittelwert
+    ist deshalb eine stabilere Schätzung derselben Aussage als jeder einzelne
+    — und zählt trotzdem nur EINMAL.
+
+    Eine Gruppe braucht mindestens die HÄLFTE ihrer Mitglieder, um zu zählen.
+    Sonst gilt ein einzelner verfügbarer Faktor als Aussage der ganzen Gruppe:
+    PLCI hatte 18 Handelstage Historie, von der Trendgruppe lag nur `momentum`
+    vor — und der Titel wurde trotzdem als „stark" eingestuft.
+    """
+    vals = [float(getattr(r, "score", 0.0)) for r in
+            (results.get(s) for s in slugs)
+            if r is not None and getattr(r, "ok", False)]
+    if not vals or len(vals) * 2 < len(slugs):
+        return None
+    return sum(vals) / len(vals)
+
+
+def _classify(results: dict[str, Any]) -> tuple[str, list[str], list[str]]:
+    """Signalstärke aus der Übereinstimmung UNABHÄNGIGER Faktor-Gruppen."""
+    confirming, contradicting, known = [], [], 0
+    for name, slugs in FACTOR_GROUPS.items():
+        v = _group_score(results, slugs)
+        if v is None:
+            continue
+        known += 1
+        if v >= CONFIRM_AT:
+            confirming.append(name)
+        elif v <= CONTRA_AT:
+            contradicting.append(name)
+
+    # Ohne mindestens zwei belegte Gruppen keine Einstufung — aus einer
+    # einzelnen Informationsquelle lässt sich keine Übereinstimmung ableiten.
+    if known < 2:
+        return SignalStrength.NONE, confirming, contradicting
+    n = len(confirming)
+    if n >= 3 and not contradicting:
+        strength = SignalStrength.STRONG
+    elif n >= 2 and len(contradicting) <= 1:
+        strength = SignalStrength.MODERATE
+    elif n >= 1:
+        strength = SignalStrength.WEAK
+    else:
+        strength = SignalStrength.NONE
+    return strength, confirming, contradicting
+
+
+def build_breakdown(scored: Any, composites: dict[str, dict[str, float]],
+                    computors: list[Any] | None = None) -> Breakdown:
+    """Aufschlüsselung + Signalstärke aus einem bereits gescorten Instrument."""
+    results = getattr(scored, "results", {}) or {}
+    labels = _label_map(computors)
+
+    tech, tech_cov = _components(results, composites.get("technical_rating", {}), labels)
+    fund, _ = _components(results, composites.get("fundamental_rating", {}), labels)
+    strength, confirming, contradicting = _classify(results)
+
+    note = None
+    if tech_cov < MIN_COVERAGE_FOR_SIGNAL:
+        note = (f"Nur {tech_cov:.0%} der technischen Gewichtung ist mit Daten "
+                f"belegt — der Score ist entsprechend unsicher.")
+        # Eine Signalstärke auf halber Datenlage behauptet mehr, als die Daten
+        # hergeben. Lieber keine Einstufung als eine, die auf Lücken beruht.
+        strength = SignalStrength.NONE
+    return Breakdown(technical=tech, fundamental=fund, signal_strength=strength,
+                     confirming=confirming, contradicting=contradicting,
+                     coverage=tech_cov, note=note)

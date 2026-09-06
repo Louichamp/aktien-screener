@@ -18,6 +18,18 @@ async function computeHash(password: string): Promise<string> {
     .join("");
 }
 
+// Hängt den Backend-Schlüssel an die weitergeleiteten API-Aufrufe.
+// Der Browser sieht ihn nie: next.config.mjs proxied /api/v1/* serverseitig
+// zum zweiten Vercel-Projekt, und dieser Header wird hier — vor dem Rewrite —
+// gesetzt. BACKEND_API_KEY ist bewusst NICHT NEXT_PUBLIC_.
+function withBackendKey(request: NextRequest): NextResponse {
+  const key = process.env.BACKEND_API_KEY;
+  if (!key) return NextResponse.next();
+  const headers = new Headers(request.headers);
+  headers.set("x-api-key", key);
+  return NextResponse.next({ request: { headers } });
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
@@ -42,13 +54,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const isApi = pathname.startsWith("/api/v1/");
+
   const expected = process.env.SITE_PASSWORD;
-  if (!expected) return NextResponse.next();   // kein Schutz konfiguriert -> durchlassen
+  if (!expected) return withBackendKey(request);   // kein Schutz konfiguriert
 
   const sessionValue = request.cookies.get(COOKIE_NAME)?.value;
   if (sessionValue) {
     const expectedHash = await computeHash(expected);
-    if (sessionValue === expectedHash) return NextResponse.next();   // gültiges Cookie
+    if (sessionValue === expectedHash) return withBackendKey(request);   // gültiges Cookie
+  }
+
+  // Unangemeldete API-Aufrufe bekommen 401 statt eines Redirects: Ein
+  // fetch() folgt dem 302 zu /login und bekommt HTML zurück, was im Client
+  // als kryptischer JSON-Parse-Fehler landet statt als klarer Auth-Fehler.
+  if (isApi) {
+    return NextResponse.json({ detail: "Nicht angemeldet" }, { status: 401 });
   }
 
   const loginUrl = new URL("/login", request.url);
