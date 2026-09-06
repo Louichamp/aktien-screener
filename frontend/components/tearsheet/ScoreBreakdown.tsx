@@ -1,5 +1,6 @@
 import type { ScoreBreakdown as Breakdown, ScoreComponent } from "@/lib/types";
 import { SignalBadge } from "@/components/Badges";
+import { qualityColor } from "@/lib/format";
 
 // Beantwortet „warum 87?" aus den tatsächlich gespeicherten Sub-Scores
 // (screener/explain.py). Vorher stand dort nur die verdichtete Zahl — die
@@ -88,6 +89,12 @@ export default function ScoreBreakdownPanel(
         <h3 className="font-serif text-lg font-bold text-slate-100">Warum dieser Score?</h3>
         <div className="flex items-center gap-3">
           <SignalBadge strength={b.signal_strength} confirming={b.confirming} />
+          {b.data_quality?.score != null && (
+            <span className={`font-mono text-xs ${qualityColor(b.data_quality.score)}`}
+                  title="Belastbarkeit der Datengrundlage">
+              Daten {b.data_quality.score}/100
+            </span>
+          )}
           {total != null && (
             <span className="font-mono text-sm font-bold text-slate-200">{total}/100</span>
           )}
@@ -118,6 +125,22 @@ export default function ScoreBreakdownPanel(
         <p className="mt-3 rounded border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
           {b.note}
         </p>
+      )}
+
+      {/* Was der Datengrundlage konkret fehlt — aus den Rohdaten abgeleitet,
+          nicht formuliert: fehlende Historie, Nulltage, verdächtige Sprünge. */}
+      {b.data_quality && (b.data_quality.issues?.length ?? 0) > 0 && (
+        <div className="mt-3 rounded border border-edge bg-panel2/60 px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+            Datengrundlage: {b.data_quality.label}
+            {b.data_quality.bars != null && ` · ${b.data_quality.bars} Handelstage`}
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {b.data_quality.issues.map((it, i) => (
+              <li key={i} className="text-xs text-slate-400">· {it}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <p className="mt-3 text-[11px] leading-relaxed text-muted">

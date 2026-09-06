@@ -6,7 +6,8 @@ import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from 
 import type { ScreenerQuery, ScreenerRow, SortBy } from "@/lib/types";
 import { fetchScreenerAll } from "@/lib/api";
 import {
-  fmtPrice, fmtNum, fmtPct, fmtDate, fmtAge, ageColor, totalColor, ASSET_LABEL,
+  fmtPrice, fmtNum, fmtPct, fmtDate, fmtAge, ageColor, totalColor,
+  qualityColor, ASSET_LABEL,
 } from "@/lib/format";
 import { getFavorites, toggleFavorite } from "@/lib/favorites";
 import { rowsToCsv, downloadCsv } from "@/lib/csv";
@@ -41,6 +42,13 @@ const COLS: Col[] = [
     render: (r) => <span className={`font-mono text-base font-bold tabular-nums ${totalColor(r.total_score)}`}>{r.total_score ?? "—"}</span> },
   { key: "rating", label: "Rating", align: "center", sort: "rating", defaultOn: true,
     render: (r) => <RecommendationBadge rating={r.rating} /> },
+  { key: "data_quality", label: "Daten", align: "center", sort: "data_quality",
+    title: "Datenqualität — worauf der Score beruht (Historie, Aktualität, Kennzahlen, Reihenqualität)",
+    defaultOn: true,
+    render: (r) => r.data_quality == null
+      ? <span className="text-xs text-muted">—</span>
+      : <span className={`font-mono text-xs font-semibold tabular-nums ${qualityColor(r.data_quality)}`}
+              title={r.data_quality_label ?? undefined}>{r.data_quality}</span> },
   { key: "signal_strength", label: "Signal", align: "center", sort: "signal_strength",
     title: "Signalstärke — wie viele unabhängige Faktoren sich bestätigen",
     defaultOn: true,

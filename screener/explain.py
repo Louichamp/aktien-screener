@@ -57,6 +57,8 @@ FACTOR_GROUPS: dict[str, tuple[str, ...]] = {
 
 CONFIRM_AT = 6.5          # ab diesem Sub-Score (0..10) gilt ein Faktor als bestätigend
 CONTRA_AT = 4.0           # darunter spricht er aktiv dagegen
+# Unter dieser technischen Abdeckung wird keine Signalstärke mehr behauptet.
+MIN_COVERAGE_FOR_SIGNAL = 0.6
 
 
 class SignalStrength:
@@ -145,11 +147,18 @@ def _group_score(results: dict[str, Any], slugs: tuple[str, ...]) -> float | Non
     Innerhalb einer Gruppe sind die Faktoren hoch korreliert; ihr Mittelwert
     ist deshalb eine stabilere Schätzung derselben Aussage als jeder einzelne
     — und zählt trotzdem nur EINMAL.
+
+    Eine Gruppe braucht mindestens die HÄLFTE ihrer Mitglieder, um zu zählen.
+    Sonst gilt ein einzelner verfügbarer Faktor als Aussage der ganzen Gruppe:
+    PLCI hatte 18 Handelstage Historie, von der Trendgruppe lag nur `momentum`
+    vor — und der Titel wurde trotzdem als „stark" eingestuft.
     """
     vals = [float(getattr(r, "score", 0.0)) for r in
             (results.get(s) for s in slugs)
             if r is not None and getattr(r, "ok", False)]
-    return sum(vals) / len(vals) if vals else None
+    if not vals or len(vals) * 2 < len(slugs):
+        return None
+    return sum(vals) / len(vals)
 
 
 def _classify(results: dict[str, Any]) -> tuple[str, list[str], list[str]]:
@@ -192,9 +201,12 @@ def build_breakdown(scored: Any, composites: dict[str, dict[str, float]],
     strength, confirming, contradicting = _classify(results)
 
     note = None
-    if tech_cov < 0.6:
+    if tech_cov < MIN_COVERAGE_FOR_SIGNAL:
         note = (f"Nur {tech_cov:.0%} der technischen Gewichtung ist mit Daten "
                 f"belegt — der Score ist entsprechend unsicher.")
+        # Eine Signalstärke auf halber Datenlage behauptet mehr, als die Daten
+        # hergeben. Lieber keine Einstufung als eine, die auf Lücken beruht.
+        strength = SignalStrength.NONE
     return Breakdown(technical=tech, fundamental=fund, signal_strength=strength,
                      confirming=confirming, contradicting=contradicting,
                      coverage=tech_cov, note=note)

@@ -53,7 +53,17 @@ export interface ScoreComponent {
 }
 
 /** Warum dieser Gesamtscore? Nur in der Detailsicht. */
+export interface DataQualityDetail {
+  score: number | null;
+  label: string | null;
+  components: Record<string, number>;
+  issues: string[];
+  bars: number | null;
+  age_days: number | null;
+}
+
 export interface ScoreBreakdown {
+  data_quality?: DataQualityDetail | null;
   technical: ScoreComponent[];
   fundamental: ScoreComponent[];
   signal_strength: SignalStrength | null;
@@ -85,6 +95,8 @@ export interface ScreenerRow {
   chance_rarity: string | null;
   data_as_of: string | null;
   signal_strength: SignalStrength | null;
+  data_quality: number | null;
+  data_quality_label: string | null;
   targets: Targets;
   updated_at: string | null;
 }
@@ -148,7 +160,8 @@ export interface ScreenerListResponse {
 export type SortBy =
   | "ticker" | "name" | "sector" | "country" | "price" | "dividend_yield"
   | "wlatar" | "wlafar" | "total_score" | "rating" | "status" | "strategy"
-  | "risk_class" | "data_as_of" | "updated_at" | "chance_dots" | "signal_strength";
+  | "risk_class" | "data_as_of" | "updated_at" | "chance_dots"
+  | "signal_strength" | "data_quality";
 export type SortDir = "asc" | "desc";
 
 export interface ScreenerQuery {
@@ -170,6 +183,7 @@ export interface ScreenerQuery {
   tickers?: string;
   rare_only?: boolean;
   min_signal?: string;
+  min_data_quality?: number;
   sort_by?: SortBy;
   sort_dir?: SortDir;
   limit?: number;

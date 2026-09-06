@@ -5,12 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Facets } from "@/lib/types";
 import { RISK_CLASSES, TRENDS } from "@/lib/types";
 
-const RATING_ORDER = ["STARK KAUFEN", "KAUFEN", "HALTEN", "REDUZIEREN", "VERKAUFEN"];
+const RATING_ORDER = ["STARK KAUFEN", "KAUFEN", "HALTEN", "REDUZIEREN",
+                      "VERKAUFEN", "UNKLAR"];
 
 const FILTER_KEYS = [
   "strategy", "risk_class", "sector", "country", "asset_class", "status",
   "rating", "trend_long", "min_total_score", "min_dividend_yield", "search", "rare_only",
-  "min_signal",
+  "min_signal", "min_data_quality",
 ];
 
 // „Mindestens moderat" ist die praktisch nützliche Abfrage: Sie blendet
@@ -124,6 +125,18 @@ export default function FilterBar({ facets }: { facets: Facets }) {
           <Select label="Status" k="status" params={params} update={update} options={facets.statuses} />
           <Select label="Rating" k="rating" params={params} update={update} options={orderRating} />
           <Select label="Langfr. Trend" k="trend_long" params={params} update={update} options={[...TRENDS]} />
+          <Field label="Datenqualität">
+            <select
+              value={params.get("min_data_quality") ?? ""}
+              onChange={(e) => update("min_data_quality", e.target.value)}
+              className="rounded border border-edge bg-panel2 px-2 py-1.5 text-sm text-slate-200 focus:border-accent focus:outline-none"
+              title="Mindestens belastbare Datengrundlage"
+            >
+              <option value="">alle</option>
+              <option value="85">nur vollständige</option>
+              <option value="60">mind. eingeschränkt</option>
+            </select>
+          </Field>
           <Field label="Signalstärke">
             <select
               value={params.get("min_signal") ?? ""}

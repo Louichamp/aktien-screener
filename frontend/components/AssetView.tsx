@@ -97,6 +97,15 @@ export default function AssetView() {
         </div>
       </header>
 
+      {row.rating === "UNKLAR" && (
+        <p className="mt-4 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+          Für diesen Wert wird bewusst KEINE Handlungsempfehlung ausgesprochen:
+          Die Datengrundlage ({row.data_quality ?? "—"}/100) reicht dafür nicht
+          aus. Der Score selbst ist ehrlich berechnet — er beruht nur auf
+          weniger, als er vermuten lässt.
+        </p>
+      )}
+
       <div className="py-6">
         <ScoreBreakdownPanel breakdown={row.score_breakdown} total={row.total_score} />
       </div>

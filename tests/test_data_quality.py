@@ -131,3 +131,37 @@ def test_dict_ist_vollstaendig_und_serialisierbar():
     d = _assess(_series(300)).to_dict()
     json.dumps(d)
     assert {"score", "label", "components", "issues", "bars", "age_days"} <= set(d)
+
+
+# --------------------------------------------------------------------------- #
+#  Kopplung an die Handlungsempfehlung
+# --------------------------------------------------------------------------- #
+def test_keine_kaufempfehlung_auf_duenner_datenlage():
+    """Der schwerwiegendste Befund des Volllaufs: PLCI stand mit
+    Datenqualität 31 und ohne eine einzige Fundamentalkennzahl auf
+    STARK KAUFEN. Fehlt eine Komponente, rechnet compute_total_score mit der
+    verbleibenden weiter — ein rein technischer Wert wurde so zu einem
+    scheinbar vollwertigen Gesamtrating."""
+    from infrastructure.database.repository import (MIN_QUALITY_FOR_RATING,
+                                                    RATING_UNCLEAR, rating_label)
+    assert rating_label(86, 31) == RATING_UNCLEAR
+    assert rating_label(86, MIN_QUALITY_FOR_RATING - 1) == RATING_UNCLEAR
+    # Auch eine Verkaufsempfehlung ist auf dieser Grundlage nicht zu vertreten.
+    assert rating_label(20, 31) == RATING_UNCLEAR
+
+
+def test_bei_belastbarer_datenlage_bleibt_alles_wie_bisher():
+    from infrastructure.database.repository import (MIN_QUALITY_FOR_RATING,
+                                                    rating_label)
+    assert rating_label(86, MIN_QUALITY_FOR_RATING) == "STARK KAUFEN"
+    assert rating_label(86, 95) == "STARK KAUFEN"
+    assert rating_label(70, 90) == "KAUFEN"
+    assert rating_label(20, 90) == "VERKAUFEN"
+
+
+def test_ohne_angabe_zur_datenqualitaet_unveraendertes_verhalten():
+    """Rückwärtskompatibel: Wer die Datenqualität nicht kennt, bekommt das
+    bisherige Verhalten — sonst würden Altbestände schlagartig UNKLAR."""
+    from infrastructure.database.repository import rating_label
+    assert rating_label(86) == "STARK KAUFEN"
+    assert rating_label(None) is None

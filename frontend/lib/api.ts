@@ -46,6 +46,7 @@ function buildQuery(q: ScreenerQuery): string {
   set("tickers", q.tickers);
   if (q.rare_only) sp.set("rare_only", "true");
   set("min_signal", q.min_signal);
+  set("min_data_quality", q.min_data_quality);
   set("sort_by", q.sort_by);
   set("sort_dir", q.sort_dir);
   sp.set("limit", String(q.limit ?? 25));

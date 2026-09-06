@@ -54,8 +54,18 @@ export function ratingStyle(rating: string | null): string {
     case "HALTEN": return "bg-warn/15 text-warn ring-1 ring-warn/40";
     case "REDUZIEREN": return "bg-orange-500/15 text-orange-400 ring-1 ring-orange-500/40";
     case "VERKAUFEN": return "bg-bear/15 text-bear ring-1 ring-bear/40";
+    // UNKLAR ist bewusst neutral-grau und NICHT eingefärbt: Es ist keine
+    // schwächere Kaufempfehlung, sondern die Feststellung, dass die
+    // Datengrundlage für eine Empfehlung nicht ausreicht.
+    case "UNKLAR": return "bg-edge text-muted ring-1 ring-edge";
     default: return "bg-edge text-muted";
   }
+}
+
+/** Farbe der Datenqualität (0–100). Grenzen wie screener/data_quality.py. */
+export function qualityColor(v: number | null): string {
+  if (v == null) return "text-muted";
+  return v >= 85 ? "text-bull" : v >= 60 ? "text-warn" : "text-bear";
 }
 
 export const ASSET_LABEL: Record<string, string> = {

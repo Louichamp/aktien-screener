@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-DEFAULT_DB = f"sqlite+aiosqlite:///{(ROOT / '.cache' / 'local_preview.db').as_posix()}"
+DEFAULT_DB = f"sqlite+aiosqlite:///{(ROOT / '.cache' / 'full_run.db').as_posix()}"
 
 
 def main() -> None:

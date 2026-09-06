@@ -159,3 +159,23 @@ def test_labels_kommen_aus_den_computors():
 def test_dict_ist_serialisierbar():
     import json
     json.dumps(_bd(trend=7.0, momentum=7.0).to_dict())
+
+
+# --------------------------------------------------------------------------- #
+#  Kopplung an die Datenlage
+# --------------------------------------------------------------------------- #
+def test_gruppe_mit_zu_wenigen_mitgliedern_zaehlt_nicht():
+    """PLCI hatte 18 Handelstage Historie; von der vierköpfigen Trendgruppe lag
+    nur `momentum` vor — und der Titel wurde trotzdem als 'stark' eingestuft.
+    Ein einzelner Faktor darf nicht für seine ganze Gruppe sprechen."""
+    b = _bd(momentum=9.0, volume=9.0, institutional_demand=9.0)
+    assert "Trendstärke" not in b.confirming        # 1 von 4 reicht nicht
+    assert "Volumen" in b.confirming                # 2 von 2 reicht
+
+
+def test_keine_signalstaerke_auf_halber_datenlage():
+    from screener.explain import MIN_COVERAGE_FOR_SIGNAL
+    b = _bd(momentum=9.0, breakout=9.0, setup=9.0)   # Trendgruppe fehlt weitgehend
+    assert b.coverage < MIN_COVERAGE_FOR_SIGNAL
+    assert b.signal_strength == SignalStrength.NONE
+    assert b.note is not None

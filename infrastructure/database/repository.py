@@ -39,10 +39,33 @@ def compute_total_score(wlatar: float | None, wlafar: float | None) -> int | Non
     return None if den == 0 else round(num / den * 10)
 
 
-def rating_label(total_score: int | None) -> str | None:
-    """Gesamtrating 0..100 -> handelbares Label (Louichamp-Rating)."""
+# Unterhalb dieser Datenqualität wird KEINE Empfehlung mehr ausgesprochen.
+# Entspricht der Grenze zu „unzureichend" in screener/data_quality.py.
+MIN_QUALITY_FOR_RATING = 60
+
+RATING_UNCLEAR = "UNKLAR"
+
+
+def rating_label(total_score: int | None,
+                 data_quality: int | None = None) -> str | None:
+    """Gesamtrating 0..100 -> handelbares Label (Louichamp-Rating).
+
+    Reicht die Datengrundlage nicht, wird KEINE Empfehlung gegeben, sondern
+    `UNKLAR`. Grund: Fehlt eine Komponente, rechnet `compute_total_score`
+    mit der verbleibenden weiter — ein rein technischer Wert von 8,6/10 wurde
+    so zu „86/100 STARK KAUFEN", ununterscheidbar von einem Titel mit
+    vollständiger Grundlage. Im Volllauf vom 2026-09-06 betraf das 4161 von
+    4906 Titeln; PLCI stand mit Datenqualität 31 und ohne eine einzige
+    Fundamentalkennzahl auf STARK KAUFEN.
+
+    Der Score selbst bleibt erhalten und wird weiter angezeigt — er ist
+    ehrlich berechnet. Nur die Handlungsempfehlung entfällt, weil sie auf
+    dieser Grundlage nicht zu verantworten ist.
+    """
     if total_score is None:
         return None
+    if data_quality is not None and data_quality < MIN_QUALITY_FOR_RATING:
+        return RATING_UNCLEAR
     if total_score >= 80:
         return "STARK KAUFEN"
     if total_score >= 65:
@@ -84,7 +107,7 @@ def screener_row_to_values(row: ScreenerRow, *, price: float | None = None,
         strategy_tag=row.strategy_tag,
         strategy_tags=list(row.strategy_tags),
         status=row.status,
-        rating=rating_label(total),
+        rating=rating_label(total, data_quality),
         wlatar=None if row.wlatar is None else round(row.wlatar),
         wlafar=None if row.wlafar is None else round(row.wlafar),
         total_score=total,
