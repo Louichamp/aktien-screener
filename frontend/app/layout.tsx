@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import MainNav from "@/components/MainNav";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -32,9 +33,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Screener
               </span>
             </Link>
-            <span className="hidden font-mono text-xs text-muted sm:block">
-              Technik · Fundament · Kronos
-            </span>
+            <div className="flex items-center gap-4">
+              <MainNav />
+              <span className="hidden font-mono text-xs text-muted lg:block">
+                Technik · Fundament · Kronos
+              </span>
+            </div>
           </div>
         </header>
         <main className="mx-auto max-w-[1500px] px-6 py-6">{children}</main>

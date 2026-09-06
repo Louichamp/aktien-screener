@@ -128,3 +128,24 @@ class ScreenerRowModel(Base):
         # 0.5GB-Postgres-Free-Tier ist das reiner Overhead ohne Query-Nutzen
         # (entfernt in Migration 0006, s. storage_notes.md).
     )
+
+
+class WeeklyWatchlistModel(Base):
+    """Eine erzeugte Wochen-Watchlist (Verlauf, nicht nur der letzte Stand).
+
+    Der komplette Aufbau — Marktüberblick, Sektor-Ranking, Kandidaten — liegt
+    als fertiges Dokument in `payload`. Er entsteht einmal pro Woche aus den
+    ohnehin berechneten Screener-Zeilen; hier wird nichts neu gerechnet, nur
+    festgehalten, was an diesem Montag galt.
+    """
+    __tablename__ = "weekly_watchlist"
+
+    generated_at: Mapped[str] = mapped_column(String(32), primary_key=True)
+    week_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
+    n_candidates: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    universe_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_weekly_watchlist_created", "created_at"),)

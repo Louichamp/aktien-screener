@@ -1,0 +1,52 @@
+name: Wochen-Watchlist
+
+# Erzeugt montags die Watchlist nach der Vier-Schritte-Methodik.
+#
+# Zeitpunkt: 06:40 UTC. Der taegliche Score-Lauf startet um 06:00 UTC und
+# braucht seit der Buendelung rund fuenf Minuten — die Watchlist arbeitet
+# also auf frischen Daten und steht deutlich vor 9 Uhr deutscher Zeit bereit.
+#
+# Der Lauf rechnet NICHTS neu und holt nichts von aussen: Er liest die
+# Screener-Zeilen, waehlt aus, ordnet und schreibt ein fertiges Dokument.
+# Entsprechend dauert er Sekunden und ist beliebig wiederholbar.
+
+on:
+  schedule:
+    - cron: "40 6 * * 1"          # montags 06:40 UTC
+  workflow_dispatch:
+    inputs:
+      per_priority:
+        description: "Kandidaten je Prioritaetsstufe"
+        required: false
+        default: "8"
+
+concurrency:
+  group: weekly-watchlist
+  cancel-in-progress: false
+
+jobs:
+  build-watchlist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PER_PRIORITY: ${{ github.event.inputs.per_priority || '8' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Abhaengigkeiten
+        run: pip install -r requirements.txt
+
+      - name: Alembic-Migrationen anwenden
+        run: |
+          pip install alembic
+          alembic upgrade head
+
+      - name: Watchlist erzeugen
+        run: python scripts/build_watchlist.py --per-priority "$PER_PRIORITY"

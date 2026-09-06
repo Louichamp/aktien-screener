@@ -19,6 +19,7 @@ import type {
   ScreenerQuery,
   ScreenerRowDetail,
   Summary,
+  WatchlistResponse,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "";
@@ -130,5 +131,15 @@ export async function fetchNews(ticker: string): Promise<NewsResponse> {
   const res = await fetch(`${API_BASE}/api/v1/screener/${encodeURIComponent(ticker)}/news`,
     { cache: "no-store" });
   if (!res.ok) throw new Error(`News fehlgeschlagen: ${res.status}`);
+  return res.json();
+}
+
+
+// Die Wochen-Watchlist entsteht montags einmal und liegt fertig in der DB.
+// Der Backend-Header erlaubt entsprechend längeres Zwischenspeichern.
+export async function fetchWatchlist(week?: string): Promise<WatchlistResponse> {
+  const q = week ? `?week=${encodeURIComponent(week)}` : "";
+  const res = await fetch(`${API_BASE}/api/v1/watchlist${q}`);
+  if (!res.ok) throw new Error(`Watchlist fehlgeschlagen: ${res.status}`);
   return res.json();
 }

@@ -194,3 +194,59 @@ export const RISK_CLASSES = [
   "sehr niedrig", "niedrig", "mittel", "hoch", "sehr hoch",
 ] as const;
 export const TRENDS = ["AUFWÄRTS", "NEUTRAL", "ABWÄRTS"] as const;
+
+
+// ── Wochen-Watchlist (screener/watchlist.py) ────────────────────────────────
+export interface MarketOverview {
+  n_total: number;
+  share_uptrend: number;
+  share_downtrend: number;
+  median_score: number;
+  breadth_verdict: string | null;
+  note: string | null;
+}
+
+export interface SectorRank {
+  sector: string;
+  n: number;
+  median_score: number;
+  share_uptrend: number;
+  n_candidates: number;
+  rank: number;
+  verdict: string | null;
+}
+
+export interface WatchCandidate {
+  ticker: string;
+  name: string | null;
+  sector: string | null;
+  priority: number;
+  price: number | null;
+  currency: string | null;
+  total_score: number | null;
+  rating: string | null;
+  signal_strength: SignalStrength | null;
+  data_quality: number | null;
+  status: string | null;
+  trend_long: string | null;
+  reason: string | null;
+  buy_zone_low: number | null;
+  buy_zone_high: number | null;
+  stop: number | null;
+  dist_to_pivot_pct: number | null;
+  risk_pct: number | null;
+  liquidity_segment: string | null;
+  base_state: string | null;
+}
+
+export interface WatchlistResponse {
+  generated_at: string | null;
+  week_label: string | null;
+  market: MarketOverview;
+  sectors: SectorRank[];
+  candidates: WatchCandidate[];
+  universe_size: number;
+  passed_filter: number;
+  note: string | null;
+  available_weeks: string[];
+}
