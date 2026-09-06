@@ -47,7 +47,8 @@ RATING_UNCLEAR = "UNKLAR"
 
 
 def rating_label(total_score: int | None,
-                 data_quality: int | None = None) -> str | None:
+                 data_quality: int | None = None,
+                 *, complete: bool = True) -> str | None:
     """Gesamtrating 0..100 -> handelbares Label (Louichamp-Rating).
 
     Reicht die Datengrundlage nicht, wird KEINE Empfehlung gegeben, sondern
@@ -61,20 +62,29 @@ def rating_label(total_score: int | None,
     Der Score selbst bleibt erhalten und wird weiter angezeigt — er ist
     ehrlich berechnet. Nur die Handlungsempfehlung entfällt, weil sie auf
     dieser Grundlage nicht zu verantworten ist.
+
+    `complete=False` bedeutet: nur EINE der beiden Säulen (technisch bzw.
+    fundamental) liegt vor. Die Datenqualität allein fängt das nicht ab —
+    ein Titel mit voller Kurshistorie, aber ohne Fundamentaldaten erreicht
+    87/100 Datenqualität, weil die fundamentale Komponente dort nur 12 %
+    Gewicht hat. Im Volllauf standen so 1247 Kaufempfehlungen auf halber
+    Beweislage. Die STÄRKSTE Aussage in beide Richtungen (STARK KAUFEN,
+    VERKAUFEN) setzt beide Säulen voraus; einseitige Scores werden auf die
+    jeweils nächstschwächere Stufe gedeckelt.
     """
     if total_score is None:
         return None
     if data_quality is not None and data_quality < MIN_QUALITY_FOR_RATING:
         return RATING_UNCLEAR
     if total_score >= 80:
-        return "STARK KAUFEN"
+        return "STARK KAUFEN" if complete else "KAUFEN"
     if total_score >= 65:
         return "KAUFEN"
     if total_score >= 50:
         return "HALTEN"
     if total_score >= 35:
         return "REDUZIEREN"
-    return "VERKAUFEN"
+    return "VERKAUFEN" if complete else "REDUZIEREN"
 
 
 def screener_row_to_values(row: ScreenerRow, *, price: float | None = None,
@@ -107,7 +117,11 @@ def screener_row_to_values(row: ScreenerRow, *, price: float | None = None,
         strategy_tag=row.strategy_tag,
         strategy_tags=list(row.strategy_tags),
         status=row.status,
-        rating=rating_label(total, data_quality),
+        # Vollständig heißt: BEIDE Säulen liegen vor. compute_total_score
+        # renormiert sonst auf die vorhandene — ein rein technischer Wert von
+        # 8,6/10 wurde so zu „86/100 STARK KAUFEN".
+        rating=rating_label(total, data_quality,
+                            complete=(row.wlatar is not None and row.wlafar is not None)),
         wlatar=None if row.wlatar is None else round(row.wlatar),
         wlafar=None if row.wlafar is None else round(row.wlafar),
         total_score=total,

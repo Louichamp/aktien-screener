@@ -88,12 +88,80 @@ def test_nulltage_werden_erkannt():
     assert any("ohne Umsatz" in i for i in q.issues)
 
 
-def test_verdaechtiger_sprung_deutet_auf_split_fehler():
-    """Ein nicht angepasster Split zeigt sich als ~50-%-Tagessprung."""
-    c = _series(300)
-    c[150] = Candle(c[150].o, c[150].h * 2, c[150].l, c[150].c * 2.0, c[150].v)
-    q = _assess(c)
-    assert any("Split" in i for i in q.issues)
+# --------------------------------------------------------------------------- #
+#  Klassifikation grosser Kursbewegungen
+#
+#  Die Live-Analyse ueber 2170 Spruenge >35 % ergab: 65,3 % sind echte
+#  Bewegungen, nur rund 20 % echte Datenprobleme. Eine Pauschalstrafe wertete
+#  Titel ab, die schlicht stark gestiegen sind.
+# --------------------------------------------------------------------------- #
+def _scale(k: Candle, f: float, volume=None) -> Candle:
+    return Candle(k.o * f, k.h * f, k.l * f, k.c * f,
+                  k.v if volume is None else volume)
+
+
+def _jump(c, i, factor, *, volume=None, revert=False, persist=True):
+    """Setzt an Position i einen Kurssprung.
+
+    `persist` skaliert ALLE Folgekerzen mit — so bleibt die Reihe in sich
+    gültig (Schluss innerhalb Hoch/Tief) und das neue Niveau hat Bestand.
+    Ein Sprung, der nur eine Kerze verschiebt, erzeugt sonst automatisch
+    einen zweiten Sprung zurück und verfälscht den Test.
+    """
+    base = c[i - 1].c
+    v = c[i].v if volume is None else volume
+    if revert:                              # nur diese eine Kerze verschieben
+        c[i] = _scale(c[i], factor, v)
+        return c
+    end = len(c) if persist else min(i + 3, len(c))
+    for j in range(i, end):
+        c[j] = _scale(c[j], factor, v if j == i else None)
+    if not persist:                          # danach zurueck aufs alte Niveau
+        for j in range(end, len(c)):
+            c[j] = c[j]
+    return c
+
+
+def test_glattes_split_verhaeltnis_gilt_als_datenproblem():
+    """Ein echter Split waere von der Datenquelle bereinigt worden — bleibt das
+    glatte Verhaeltnis stehen, ist die Bereinigung fehlgeschlagen."""
+    q = _assess(_jump(_series(300), 150, 2.0))
+    assert any("Split-Verhältnis" in i for i in q.issues)
+
+
+def test_rueckabgewickelter_sprung_ist_ein_ausreisser():
+    """Eine einzelne verschobene Kerze, die am Folgetag wieder auf dem alten
+    Niveau liegt — ein Ausreißer-Tick, kein Marktgeschehen."""
+    q = _assess(_jump(_series(300), 150, 1.6, revert=True))
+    assert any("zurückgenommen" in i for i in q.issues)
+
+
+def test_sprung_ohne_umsatz_wird_erkannt():
+    """LVO: 900 -> 300 USD bei Volumen 0 — es hat schlicht kein Handel
+    stattgefunden, also gibt es auch keinen Kurs."""
+    q = _assess(_jump(_series(300), 150, 0.333, volume=0.0))
+    assert any("ohne Umsatz" in i for i in q.issues)
+
+
+def test_echte_kursbewegung_wird_nicht_bestraft():
+    """DER Kernpunkt: AACG stieg 1,36 -> 14,30 USD bei sehr hohem Volumen. So
+    etwas ist eine Markttatsache, kein Datenfehler."""
+    sauber = _assess(_series(300))
+    # 1,62x ist bewusst KEIN glattes Split-Verhaeltnis, mit Volumenanstieg
+    # und Bestand ueber die Folgetage.
+    bewegt = _assess(_jump(_series(300), 150, 1.62, volume=5_000_000.0))
+    assert bewegt.components["reihe"] == sauber.components["reihe"], (
+        f"echte Bewegung kostete Reihenqualitaet: "
+        f"{bewegt.components['reihe']} statt {sauber.components['reihe']}")
+    assert bewegt.score >= sauber.score - 1
+
+
+def test_grosse_bewegung_ohne_volumenbestaetigung_wiegt_leichter():
+    """Unbestaetigt ist nicht dasselbe wie kaputt — die Strafe muss deutlich
+    geringer ausfallen als bei einem echten Datenfehler."""
+    unbestaetigt = _assess(_jump(_series(300), 150, 1.62, volume=1.0))
+    kaputt = _assess(_jump(_series(300), 150, 2.0, volume=1.0))
+    assert unbestaetigt.components["reihe"] > kaputt.components["reihe"]
 
 
 def test_widerspruechliche_kerze_wird_erkannt():

@@ -14,9 +14,14 @@ from .dependencies import make_lifespan
 from .routes import router
 
 
-# Pfade, die auch ohne Schlüssel erreichbar bleiben: Monitoring und die
-# OpenAPI-Oberfläche (letztere gibt keine Marktdaten preis).
-_OPEN_PATHS = frozenset({"/health", "/", "/docs", "/redoc", "/openapi.json"})
+# Der EINZIGE Pfad, der ohne Schlüssel erreichbar bleibt. `/health` muss offen
+# sein, damit Monitoring den Dienst prüfen kann, und gibt nur "ok" zurück.
+#
+# `/openapi.json`, `/docs` und `/redoc` sind bewusst NICHT offen: Sie
+# beschreiben die vollständige API-Oberfläche samt aller Filterparameter.
+# Für ein privates Werkzeug gibt es keinen Grund, das ungeschützt anzubieten —
+# live war es abrufbar (HTTP 200 ohne jede Anmeldung).
+_OPEN_PATHS = frozenset({"/health"})
 
 
 def _install_access_key(app: FastAPI) -> None:
