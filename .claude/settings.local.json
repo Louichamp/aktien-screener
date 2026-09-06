@@ -20,12 +20,7 @@
       "Bash(ls -la \"C:/Users/Louis Först/.claude/projects/\" 2>/dev/null | head; echo \"---try win path---\"; ls \"C:/Users/Louis Först/.claude/projects/D--Trade-rian-screener/\" 2>/dev/null || echo \"missing\")",
       "PowerShell($node = \\(Get-Command node -ErrorAction SilentlyContinue\\); $npm = \\(Get-Command npm -ErrorAction SilentlyContinue\\); if\\($node\\){ \"node: $\\(node --version\\) @ $\\($node.Source\\)\" } else { \"node: NOT FOUND\" }; if\\($npm\\){ \"npm: $\\(npm --version\\)\" } else { \"npm: NOT FOUND\" })",
       "PowerShell(cd frontend; $env:NEXT_TELEMETRY_DISABLED=1; npm run build 2>&1 | Select-Object -Last 40)",
-      "PowerShell($ok=$false; foreach\\($i in 1..20\\){ try { $h = Invoke-RestMethod http://localhost:8000/health -TimeoutSec 2; if\\($h.status -eq 'ok'\\){ $ok=$true; break } } catch { Start-Sleep -Milliseconds 500 } }; if\\(-not $ok\\){ \"API not up\"; exit 1 }; \"health OK\"; \"--- sorted by total_score desc, limit 3 ---\"; $r = Invoke-RestMethod \"http://localhost:8000/api/v1/screener?sort_by=total_score&sort_dir=desc&limit=3\"; \"total=$\\($r.total\\)\"; $r.items | ForEach-Object { \"$\\($_.ticker\\)  total=$\\($_.total_score\\)  wlatar=$\\($_.wlatar\\)  strat=$\\($_.strategy_tag\\)\" }; \"--- filter WACHSTUM ---\"; $f = Invoke-RestMethod \"http://localhost:8000/api/v1/screener?strategy=WACHSTUM\"; \"WACHSTUM total=$\\($f.total\\): $\\(\\( $f.items | ForEach-Object { $_.ticker }\\) -join ', '\\)\")",
-      "Bash(rm -rf outputs/*)",
-      "Bash(ls outputs/)",
-      "Read(//d/AI Trader/**)",
-      "Bash(\"./.venv/Scripts/python.exe\" \"scripts/challenge_run.py\")",
-      "Bash(\"D:/AI Trader/.venv/Scripts/python.exe\" \"D:/AI Trader/scripts/challenge_run.py\")"
+      "PowerShell($ok=$false; foreach\\($i in 1..20\\){ try { $h = Invoke-RestMethod http://localhost:8000/health -TimeoutSec 2; if\\($h.status -eq 'ok'\\){ $ok=$true; break } } catch { Start-Sleep -Milliseconds 500 } }; if\\(-not $ok\\){ \"API not up\"; exit 1 }; \"health OK\"; \"--- sorted by total_score desc, limit 3 ---\"; $r = Invoke-RestMethod \"http://localhost:8000/api/v1/screener?sort_by=total_score&sort_dir=desc&limit=3\"; \"total=$\\($r.total\\)\"; $r.items | ForEach-Object { \"$\\($_.ticker\\)  total=$\\($_.total_score\\)  wlatar=$\\($_.wlatar\\)  strat=$\\($_.strategy_tag\\)\" }; \"--- filter WACHSTUM ---\"; $f = Invoke-RestMethod \"http://localhost:8000/api/v1/screener?strategy=WACHSTUM\"; \"WACHSTUM total=$\\($f.total\\): $\\(\\( $f.items | ForEach-Object { $_.ticker }\\) -join ', '\\)\")"
     ]
   }
 }
