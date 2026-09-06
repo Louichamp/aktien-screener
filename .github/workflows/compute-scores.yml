@@ -80,6 +80,7 @@ jobs:
       - name: Scores berechnen + in DB schreiben
         run: |
           python scripts/compute_scores.py \
+            --prune-orphans \
             --cache .cache/snapshots.pkl \
             --refresh "$REFRESH" \
             --limit "$LIMIT" \

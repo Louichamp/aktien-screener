@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .cache import TTLCache
 from .dependencies import get_news_cache, get_news_provider, get_session
 from .queries import (DEFAULT_SORT, ScreenerFilters, get_screener_row,
-                      query_facets, query_screener_rows, query_summary)
+                      query_facets, query_screener_rows, query_summary,
+                      query_watchlist)
 from .schemas import (FacetsResponse, NewsItem, NewsResponse, ScreenerListResponse,
-                      ScreenerRowDetailSchema, ScreenerRowSchema, SummaryResponse)
+                      ScreenerRowDetailSchema, ScreenerRowSchema, SummaryResponse,
+                      WatchlistResponse)
 
 
 # Die Daten aendern sich genau einmal taeglich (Cron-Lauf). Ohne Cache-Header
@@ -120,6 +122,18 @@ async def screener_summary(
 ) -> SummaryResponse:
     response.headers["cache-control"] = _CACHE_LIST
     return SummaryResponse(**await query_summary(session, filters))
+
+
+@router.get("/watchlist", response_model=WatchlistResponse,
+            summary="Wochen-Watchlist (montags erzeugt)")
+async def get_watchlist(
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    week: Annotated[str | None, Query(description="Kalenderwoche, z.B. 'KW 36/2026'")] = None,
+) -> WatchlistResponse:
+    # Ändert sich nur einmal pro Woche — entsprechend länger zwischenspeichern.
+    response.headers["cache-control"] = _CACHE_FACETS
+    return WatchlistResponse(**await query_watchlist(session, week))
 
 
 @router.get("/screener/{ticker}", response_model=ScreenerRowDetailSchema,

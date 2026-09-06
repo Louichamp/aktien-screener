@@ -16,6 +16,7 @@ from sqlalchemy.orm import load_only
 from sqlalchemy.sql.elements import ColumnElement
 
 from infrastructure.database.models import ScreenerRowModel as M
+from infrastructure.database.models import WeeklyWatchlistModel as W
 
 # Spalten, die die LISTEN-Antwort (`ScreenerRowSchema`) tatsächlich braucht.
 # Ohne diese Einschränkung lädt `select(M)` auch die schweren JSONB-Spalten
@@ -203,3 +204,37 @@ async def query_summary(session: AsyncSession, filters: ScreenerFilters | None =
     return {"total": total, "by_rating": by_rating,
             "avg_total_score": round(num / den, 1) if den else None,
             "oldest_data_as_of": oldest, "newest_data_as_of": newest}
+
+
+async def query_watchlist(session: AsyncSession, week: str | None = None) -> dict:
+    """Neueste Wochen-Watchlist (oder eine bestimmte Kalenderwoche).
+
+    Die Liste wird NICHT hier berechnet — sie entsteht einmal wöchentlich in
+    `scripts/build_watchlist.py` und liegt fertig in der Tabelle. Der Endpunkt
+    reicht sie nur durch, damit der Aufruf schnell und reproduzierbar bleibt.
+    """
+    q = select(W).order_by(W.generated_at.desc())
+    if week:
+        q = q.where(W.week_label == week)
+    row = (await session.execute(q.limit(1))).scalars().first()
+
+    # Je Kalenderwoche nur EIN Eintrag: Ein manuell wiederholter Lauf erzeugt
+    # sonst mehrere Zeilen mit demselben Label und damit eine Auswahlliste
+    # voller Dubletten.
+    wochen = (await session.execute(
+        select(W.week_label).order_by(W.generated_at.desc()).limit(200))).scalars().all()
+    verfuegbar: list[str] = []
+    for w in wochen:
+        if w and w not in verfuegbar:
+            verfuegbar.append(w)
+    verfuegbar = verfuegbar[:52]
+
+    if row is None:
+        return {"generated_at": None, "week_label": None, "market": {},
+                "sectors": [], "candidates": [], "universe_size": 0,
+                "passed_filter": 0, "available_weeks": verfuegbar,
+                "note": "Noch keine Watchlist erzeugt — sie entsteht montags früh."}
+    data = dict(row.payload or {})
+    data["week_label"] = row.week_label
+    data["available_weeks"] = verfuegbar
+    return data

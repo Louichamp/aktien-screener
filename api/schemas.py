@@ -211,3 +211,70 @@ class SummaryResponse(BaseModel):
     # über die gefilterte Menge — zeigt die Frische des zuletzt berechneten Stands.
     oldest_data_as_of: str | None = None
     newest_data_as_of: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+#  Wochen-Watchlist
+# --------------------------------------------------------------------------- #
+class MarketOverviewSchema(BaseModel):
+    """Marktüberblick — der erste Schritt vor der Sektor- und Titelauswahl."""
+    model_config = ConfigDict(extra="ignore")
+
+    n_total: int = 0
+    share_uptrend: float = 0.0
+    share_downtrend: float = 0.0
+    median_score: float = 0.0
+    breadth_verdict: str | None = None
+    note: str | None = None
+
+
+class SectorRankSchema(BaseModel):
+    """Ein GICS-Sektor mit seiner Bewertung."""
+    model_config = ConfigDict(extra="ignore")
+
+    sector: str
+    n: int = 0
+    median_score: float = 0.0
+    share_uptrend: float = 0.0
+    n_candidates: int = 0
+    rank: int = 0
+    verdict: str | None = None
+
+
+class CandidateSchema(BaseModel):
+    """Ein Watchlist-Kandidat samt Begründung seiner Prioritätsstufe."""
+    model_config = ConfigDict(extra="ignore")
+
+    ticker: str
+    name: str | None = None
+    sector: str | None = None
+    priority: int
+    price: float | None = None
+    currency: str | None = None
+    total_score: int | None = None
+    rating: str | None = None
+    signal_strength: str | None = None
+    data_quality: int | None = None
+    status: str | None = None
+    trend_long: str | None = None
+    reason: str | None = None
+    buy_zone_low: float | None = None
+    buy_zone_high: float | None = None
+    stop: float | None = None
+    dist_to_pivot_pct: float | None = None
+    risk_pct: float | None = None
+    liquidity_segment: str | None = None
+    base_state: str | None = None
+
+
+class WatchlistResponse(BaseModel):
+    """Die vollständige Wochen-Watchlist."""
+    generated_at: str | None = None
+    week_label: str | None = None
+    market: MarketOverviewSchema = Field(default_factory=MarketOverviewSchema)
+    sectors: list[SectorRankSchema] = Field(default_factory=list)
+    candidates: list[CandidateSchema] = Field(default_factory=list)
+    universe_size: int = 0
+    passed_filter: int = 0
+    note: str | None = None
+    available_weeks: list[str] = Field(default_factory=list)
