@@ -39,6 +39,30 @@ export interface Drivers {
   zones: Zone[];
 }
 
+export type SignalStrength = "stark" | "moderat" | "schwach" | "kein Signal";
+
+/** Ein Faktor der Score-Aufschlüsselung (aus screener/explain.py). */
+export interface ScoreComponent {
+  slug: string;
+  label: string;
+  score: number;          // 0..100
+  weight: number;         // Anteil am Composite
+  contribution: number;   // Beitrag in Punkten
+  state: string | null;
+  available: boolean;     // false = keine Daten, floss NICHT ein
+}
+
+/** Warum dieser Gesamtscore? Nur in der Detailsicht. */
+export interface ScoreBreakdown {
+  technical: ScoreComponent[];
+  fundamental: ScoreComponent[];
+  signal_strength: SignalStrength | null;
+  confirming: string[];
+  contradicting: string[];
+  coverage: number | null;
+  note: string | null;
+}
+
 export interface ScreenerRow {
   ticker: string;
   name: string | null;
@@ -60,6 +84,7 @@ export interface ScreenerRow {
   risikoklasse: string | null;
   chance_rarity: string | null;
   data_as_of: string | null;
+  signal_strength: SignalStrength | null;
   targets: Targets;
   updated_at: string | null;
 }
@@ -109,6 +134,7 @@ export interface ScreenerRowDetail extends ScreenerRow {
   drivers: Drivers;
   forecast_history: ForecastPoint[];
   price_history: number[];
+  score_breakdown: ScoreBreakdown;
   news?: NewsItem[];          // optional vom Export mitgeliefert (--with-news)
 }
 
@@ -122,7 +148,7 @@ export interface ScreenerListResponse {
 export type SortBy =
   | "ticker" | "name" | "sector" | "country" | "price" | "dividend_yield"
   | "wlatar" | "wlafar" | "total_score" | "rating" | "status" | "strategy"
-  | "risk_class" | "data_as_of" | "updated_at" | "chance_dots";
+  | "risk_class" | "data_as_of" | "updated_at" | "chance_dots" | "signal_strength";
 export type SortDir = "asc" | "desc";
 
 export interface ScreenerQuery {
@@ -143,6 +169,7 @@ export interface ScreenerQuery {
   max_risk_level?: number;
   tickers?: string;
   rare_only?: boolean;
+  min_signal?: string;
   sort_by?: SortBy;
   sort_dir?: SortDir;
   limit?: number;

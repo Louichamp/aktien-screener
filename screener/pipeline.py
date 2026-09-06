@@ -19,6 +19,7 @@ from scoring import InstrumentData, ScoreEngine, ScoringContext
 
 from .base_formation import detect_base
 from .breakout_signal import evaluate_breakout
+from .explain import build_breakdown
 from .levels import LevelEngine
 from .row import ScreenerRow, assemble_row
 from .status import (Classification, ClassifierInput, StatusClassifier,
@@ -326,11 +327,15 @@ async def run_screener_pipeline(
         scored, plan, cinp, cls, s = d["scored"], d["plan"], d["cinp"], d["cls"], d["snap"]
         assignment = assignments.get(s.instrument_id)
         row = assemble_row(cinp, cls, assignment)
+        # Nutzt ausschliesslich bereits berechnete Sub-Scores — kein neuer Aufwand.
+        bd = build_breakdown(scored, score_engine.composites, score_engine.computors)
         values = screener_row_to_values(
             row, price=s.price, currency=s.currency or currency_default,
             name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
             dividend_yield=s.fundamentals.get("dividend_yield"),
             drivers=_build_drivers(scored, plan, cls, s),
+            score_breakdown=bd.to_dict(),
+            signal_strength=bd.signal_strength,
             forecast_history=_forecast_history(s.forecast),
             price_history=_price_history(s.candles),
             forecast_return=_forecast_return(s.forecast, s.price),

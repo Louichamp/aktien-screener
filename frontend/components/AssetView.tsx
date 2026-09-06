@@ -8,6 +8,7 @@ import type { NewsItem, ScreenerRowDetail } from "@/lib/types";
 import { fmtPrice, totalColor, fmtDate, fmtAge, ageColor } from "@/lib/format";
 import { RecommendationBadge } from "@/components/Badges";
 import KronosForecast from "@/components/tearsheet/KronosForecast";
+import ScoreBreakdownPanel from "@/components/tearsheet/ScoreBreakdown";
 import TechnicalDashboard from "@/components/tearsheet/TechnicalDashboard";
 import FundamentalData from "@/components/tearsheet/FundamentalData";
 import BullBearMemo from "@/components/tearsheet/BullBearMemo";
@@ -96,6 +97,10 @@ export default function AssetView() {
         </div>
       </header>
 
+      <div className="py-6">
+        <ScoreBreakdownPanel breakdown={row.score_breakdown} total={row.total_score} />
+      </div>
+      <div className="rule" />
       <div className="py-6"><KronosForecast row={row} /></div>
       <div className="rule" />
       <div className="grid grid-cols-1 gap-8 py-6 lg:grid-cols-2">

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { ScreenerRow, SortBy } from "@/lib/types";
+import type { ScreenerQuery, ScreenerRow, SortBy } from "@/lib/types";
+import { fetchScreenerAll } from "@/lib/api";
 import {
   fmtPrice, fmtNum, fmtPct, fmtDate, fmtAge, ageColor, totalColor, ASSET_LABEL,
 } from "@/lib/format";
@@ -11,7 +12,7 @@ import { getFavorites, toggleFavorite } from "@/lib/favorites";
 import { rowsToCsv, downloadCsv } from "@/lib/csv";
 import {
   RatingBadge, RecommendationBadge, StrategyTag, RarityDots,
-  BatteryBadge, TrendBadge, RiskDots,
+  BatteryBadge, TrendBadge, RiskDots, SignalBadge,
 } from "./Badges";
 import SortHeader from "./SortHeader";
 
@@ -40,6 +41,10 @@ const COLS: Col[] = [
     render: (r) => <span className={`font-mono text-base font-bold tabular-nums ${totalColor(r.total_score)}`}>{r.total_score ?? "—"}</span> },
   { key: "rating", label: "Rating", align: "center", sort: "rating", defaultOn: true,
     render: (r) => <RecommendationBadge rating={r.rating} /> },
+  { key: "signal_strength", label: "Signal", align: "center", sort: "signal_strength",
+    title: "Signalstärke — wie viele unabhängige Faktoren sich bestätigen",
+    defaultOn: true,
+    render: (r) => <SignalBadge strength={r.signal_strength} /> },
   { key: "wlatar", label: "WLATAR", title: "WLATAR – Technisches Rating (0–10)", align: "center", sort: "wlatar", defaultOn: true,
     render: (r) => <BatteryBadge value={r.wlatar} /> },
   { key: "wlafar", label: "WLAFAR", title: "WLAFAR – Fundamentales Rating (0–10)", align: "center", sort: "wlafar", defaultOn: true,
@@ -93,7 +98,8 @@ function defaultVisible(): Record<string, boolean> {
 }
 
 export default function ScreenerBoard(
-  { rows, exportRows }: { rows: ScreenerRow[]; exportRows?: ScreenerRow[] },
+  { rows, exportQuery, exportTotal }:
+  { rows: ScreenerRow[]; exportQuery?: ScreenerQuery; exportTotal?: number },
 ) {
   const router = useRouter();
   const params = useSearchParams();
@@ -101,6 +107,7 @@ export default function ScreenerBoard(
   const [visible, setVisible] = useState<Record<string, boolean>>(defaultVisible);
   const [dense, setDense] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     try {
@@ -143,10 +150,22 @@ export default function ScreenerBoard(
     router.push(`/?${next.toString()}`);
   };
 
-  const exportCsv = () => {
-    const data = exportRows && exportRows.length ? exportRows : rows;
-    downloadCsv(`louichamp_screener_${new Date().toISOString().slice(0, 10)}.csv`,
-                rowsToCsv(data));
+  // Der Export holt die volle gefilterte Menge ERST HIER — nicht mehr
+  // vorsorglich bei jeder Filter-/Sortieränderung. Ohne Query fällt er auf die
+  // sichtbare Seite zurück, damit der Knopf nie funktionslos ist.
+  const exportCsv = async () => {
+    if (exporting) return;
+    const name = `louichamp_screener_${new Date().toISOString().slice(0, 10)}.csv`;
+    if (!exportQuery) { downloadCsv(name, rowsToCsv(rows)); return; }
+    setExporting(true);
+    try {
+      const all = await fetchScreenerAll(exportQuery);
+      downloadCsv(name, rowsToCsv(all.items.length ? all.items : rows));
+    } catch {
+      downloadCsv(name, rowsToCsv(rows));   // Netzfehler -> wenigstens die Seite
+    } finally {
+      setExporting(false);
+    }
   };
 
   const btn = "rounded border border-edge bg-panel2 px-3 py-1.5 text-sm text-slate-200 " +
@@ -167,8 +186,10 @@ export default function ScreenerBoard(
               ★ Favoriten <span className="font-mono text-amber-300">{favorites.length}</span>
             </button>
           )}
-          <button onClick={exportCsv} disabled={rows.length === 0} className={btn}>
-            ⬇ CSV
+          <button onClick={exportCsv} disabled={rows.length === 0 || exporting}
+                  className={btn}
+                  title={exportTotal ? `${exportTotal.toLocaleString("de-DE")} Zeilen exportieren` : undefined}>
+            {exporting ? "⏳ CSV wird geladen …" : "⬇ CSV"}
           </button>
         </div>
         <div className="flex items-center gap-2">

@@ -65,6 +65,8 @@ def screener_row_to_values(row: ScreenerRow, *, price: float | None = None,
                            forecast_return: float | None = None,
                            forecast_method: str | None = None,
                            data_as_of: str | None = None,
+                           score_breakdown: dict[str, Any] | None = None,
+                           signal_strength: str | None = None,
                            ) -> dict[str, Any]:
     """ScreenerRow (Domäne) + Stammdaten -> Spaltenwerte (Modell)."""
     total = compute_total_score(row.wlatar, row.wlafar)
@@ -97,6 +99,8 @@ def screener_row_to_values(row: ScreenerRow, *, price: float | None = None,
         drivers=drivers or {"rationale": list(row.rationale)},
         forecast_history=forecast_history or [],
         price_history=list(price_history or []),
+        score_breakdown=score_breakdown or {},
+        signal_strength=signal_strength,
     )
 
 

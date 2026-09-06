@@ -73,6 +73,32 @@ class ForecastPoint(BaseModel):
     lower: float
 
 
+class ScoreComponentSchema(BaseModel):
+    """Ein Faktor der Score-Aufschlüsselung."""
+    model_config = ConfigDict(extra="ignore")
+
+    slug: str
+    label: str
+    score: float                 # 0..100
+    weight: float                # Anteil am Composite
+    contribution: float          # Beitrag in Punkten
+    state: str | None = None
+    available: bool = True       # False = keine Daten, floss NICHT ein
+
+
+class ScoreBreakdownSchema(BaseModel):
+    """Warum dieser Gesamtscore? (JSONB-Spalte `score_breakdown`)"""
+    model_config = ConfigDict(extra="ignore")
+
+    technical: list[ScoreComponentSchema] = Field(default_factory=list)
+    fundamental: list[ScoreComponentSchema] = Field(default_factory=list)
+    signal_strength: str | None = None
+    confirming: list[str] = Field(default_factory=list)
+    contradicting: list[str] = Field(default_factory=list)
+    coverage: float | None = None       # Anteil des Gewichts mit echten Daten
+    note: str | None = None
+
+
 class ScreenerRowSchema(BaseModel):
     """Tabellenzeile für das Dashboard (ein Instrument)."""
     model_config = ConfigDict(from_attributes=True)
@@ -100,6 +126,10 @@ class ScreenerRowSchema(BaseModel):
     risikoklasse: str | None = None
     chance_rarity: str | None = None
     data_as_of: str | None = None        # Stand der Daten dieses Werts (ISO)
+    # Wie viele unabhängige Faktoren sich bestätigen (stark/moderat/schwach).
+    # In der Liste, weil danach gefiltert und sortiert wird; die vollständige
+    # Aufschlüsselung steckt nur in der Detailsicht (Payload-Gewicht).
+    signal_strength: str | None = None
 
     targets: TargetsSchema = Field(default_factory=TargetsSchema)
     updated_at: datetime | None = None
@@ -111,6 +141,7 @@ class ScreenerRowDetailSchema(ScreenerRowSchema):
     drivers: DriversSchema = Field(default_factory=DriversSchema)
     forecast_history: list[ForecastPoint] = Field(default_factory=list)
     price_history: list[float] = Field(default_factory=list)
+    score_breakdown: ScoreBreakdownSchema = Field(default_factory=ScoreBreakdownSchema)
 
 
 class ScreenerListResponse(BaseModel):

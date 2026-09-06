@@ -10,6 +10,15 @@ const RATING_ORDER = ["STARK KAUFEN", "KAUFEN", "HALTEN", "REDUZIEREN", "VERKAUF
 const FILTER_KEYS = [
   "strategy", "risk_class", "sector", "country", "asset_class", "status",
   "rating", "trend_long", "min_total_score", "min_dividend_yield", "search", "rare_only",
+  "min_signal",
+];
+
+// „Mindestens moderat" ist die praktisch nützliche Abfrage: Sie blendet
+// Treffer aus, die nur auf einer einzelnen technischen Bedingung beruhen.
+const SIGNAL_OPTIONS = [
+  { value: "stark", label: "nur starke" },
+  { value: "moderat", label: "mind. moderat" },
+  { value: "schwach", label: "mind. schwach" },
 ];
 
 export default function FilterBar({ facets }: { facets: Facets }) {
@@ -115,6 +124,19 @@ export default function FilterBar({ facets }: { facets: Facets }) {
           <Select label="Status" k="status" params={params} update={update} options={facets.statuses} />
           <Select label="Rating" k="rating" params={params} update={update} options={orderRating} />
           <Select label="Langfr. Trend" k="trend_long" params={params} update={update} options={[...TRENDS]} />
+          <Field label="Signalstärke">
+            <select
+              value={params.get("min_signal") ?? ""}
+              onChange={(e) => update("min_signal", e.target.value)}
+              className="rounded border border-edge bg-panel2 px-2 py-1.5 text-sm text-slate-200 focus:border-accent focus:outline-none"
+              title="Wie viele unabhängige Faktoren müssen sich bestätigen?"
+            >
+              <option value="">alle</option>
+              {SIGNAL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </Field>
 
           <Field label="Min. Gesamt">
             <input

@@ -81,6 +81,13 @@ class ScreenerRowModel(Base):
     forecast_history: Mapped[list] = mapped_column(JSONBType, nullable=False, default=list)
     # Jüngste Schlusskurse (für den Verlaufs-Chart im Tearsheet): list[float].
     price_history: Mapped[list] = mapped_column(JSONBType, nullable=False, default=list)
+    # Aufschlüsselung des Gesamtscores je Faktor (Wert, Gewicht, Beitrag) —
+    # macht "warum 87?" beantwortbar. Siehe screener/explain.py.
+    score_breakdown: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
+
+    # Wie viele UNABHÄNGIGE Faktoren sich bestätigen (stark/moderat/schwach).
+    # Eigene Spalte statt JSONB-Feld: danach wird gefiltert und sortiert.
+    signal_strength: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -105,6 +112,8 @@ class ScreenerRowModel(Base):
         Index("ix_screener_rows_sector_score", "sector", "total_score"),
         Index("ix_screener_rows_strategy_score", "strategy_tag", "total_score"),
         Index("ix_screener_rows_assetclass_score", "asset_class", "total_score"),
+        Index("ix_screener_rows_signal_strength", "signal_strength"),
+        Index("ix_screener_rows_signal_score", "signal_strength", "total_score"),
         # KEINE GIN-Indizes mehr auf drivers/targets/forecast_history/price_history:
         # api/queries.py filtert nie über JSONB-Containment (`@>`/`?`) auf diesen
         # Spalten — nur Passthrough-Payload fürs Tearsheet. GIN-Indizes auf
