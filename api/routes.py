@@ -44,7 +44,8 @@ router = APIRouter(prefix="/api/v1", tags=["screener"])
 
 SortBy = Literal["ticker", "name", "sector", "country", "price", "dividend_yield",
                  "wlatar", "wlafar", "total_score", "rating", "status", "strategy",
-                 "risk_class", "data_as_of", "updated_at", "signal_strength"]
+                 "risk_class", "data_as_of", "updated_at", "signal_strength",
+                 "data_quality"]
 SignalLevel = Literal["schwach", "moderat", "stark"]
 SortDir = Literal["asc", "desc"]
 
@@ -69,6 +70,8 @@ def filter_params(
     rare_only: Annotated[bool, Query(description="Nur seltene Chancen (Rarität + KAUFEN/STARK KAUFEN)")] = False,
     signal_strength: Annotated[SignalLevel | None, Query(description="Genau diese Signalstärke")] = None,
     min_signal: Annotated[SignalLevel | None, Query(description="Mindestens diese Signalstärke")] = None,
+    min_data_quality: Annotated[int | None, Query(ge=0, le=100,
+        description="Mindest-Datenqualität (0–100)")] = None,
 ) -> ScreenerFilters:
     return ScreenerFilters(
         search=search, strategy=strategy, risk_class=risk_class, sector=sector,
@@ -77,6 +80,7 @@ def filter_params(
         min_total_score=min_total_score, min_wlatar=min_wlatar, min_wlafar=min_wlafar,
         min_dividend_yield=min_dividend_yield, max_risk_level=max_risk_level,
         signal_strength=signal_strength, min_signal=min_signal,
+        min_data_quality=min_data_quality,
         tickers=_ticker_list(tickers))
 
 

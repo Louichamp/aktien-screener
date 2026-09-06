@@ -52,6 +52,7 @@ from infrastructure.database.config import (create_engine, create_session_factor
 from infrastructure.database.repository import ScreenerRepository
 from infrastructure.forecast import apply_forecasts, build_forecaster
 from infrastructure.providers import build_market_data_provider, build_universe
+from infrastructure.run_metrics import RunMetrics, attach_db_counter
 from screener.pipeline import run_screener_pipeline
 
 
@@ -209,12 +210,13 @@ def _reusable_fundamentals(cache: dict, batch: list[str], max_age_days: int) -> 
 
 async def _fetch_batch(provider, batch: list[str], by_sym: dict,
                        *, passes: int, chunk_size: int = 200,
-                       cache: dict | None = None) -> dict:
+                       cache: dict | None = None, metrics=None) -> dict:
     """Beschafft `batch` resilient. Nutzt den gebuendelten Weg, wenn der
     Provider ihn anbietet — sonst wie bisher Titel fuer Titel."""
     if hasattr(provider, "fetch_many"):
         return await _fetch_batch_bundled(provider, batch, by_sym,
-                                          passes=passes, cache=cache or {})
+                                          passes=passes, cache=cache or {},
+                                          metrics=metrics)
     got: dict = {}
     todo = list(batch)
     for p in range(1, passes + 1):
@@ -249,7 +251,7 @@ async def _fetch_batch(provider, batch: list[str], by_sym: dict,
 
 
 async def _fetch_batch_bundled(provider, batch: list[str], by_sym: dict,
-                               *, passes: int, cache: dict) -> dict:
+                               *, passes: int, cache: dict, metrics=None) -> dict:
     """Gebuendelter Weg: Historie blockweise, Stammdaten nur wo noetig.
 
     Gemessen an 30 Titeln: identische Preise und Indikatoren wie beim
@@ -266,7 +268,8 @@ async def _fetch_batch_bundled(provider, batch: list[str], by_sym: dict,
         if not todo:
             break
         try:
-            fresh = await provider.fetch_many(todo, reuse_fundamentals=reuse)
+            fresh = await provider.fetch_many(todo, reuse_fundamentals=reuse,
+                                              metrics=metrics)
         except Exception as exc:
             print(f"  Pass {p}/{passes} fehlgeschlagen: {exc}", flush=True)
             fresh = {}
@@ -316,11 +319,13 @@ async def main() -> None:
         pass
 
     t0 = time.monotonic()
+    metrics = RunMetrics()
     cache_path = Path(args.cache)
     cache = _load_cache(cache_path)
 
     print(f"Universe laden (limit={args.limit}, source={args.source}) …", flush=True)
-    universe = await build_universe(args.limit, source=args.source)
+    with metrics.phase("universe"):
+        universe = await build_universe(args.limit, source=args.source)
     by_sym = {e["symbol"]: e for e in universe}
     universe_tickers = list(by_sym)
     universe_set = set(universe_tickers)
@@ -334,8 +339,11 @@ async def main() -> None:
     # die zurückgestellten Titel noch einmal versuchen.
     batch = (_select_oldest(universe_tickers, cache, n)
              if refresh_all else _select_oldest(universe_tickers, cache, n, failures))
+    metrics.universe_size = len(universe_tickers)
+    metrics.selected = len(batch)
     now = datetime.now(timezone.utc)
     skipped = sum(1 for t in universe_tickers if _in_backoff(failures.get(t), now))
+    metrics.skipped_backoff = skipped
     if skipped:
         dead = sum(1 for t in universe_tickers
                    if int(failures.get(t, {}).get("fails", 0)) >= 7)
@@ -353,10 +361,13 @@ async def main() -> None:
           flush=True)
 
     provider = build_market_data_provider("yahoo")
-    fresh = await _fetch_batch(provider, batch, by_sym, passes=args.passes,
-                               chunk_size=args.chunk, cache=cache)
+    with metrics.phase("fetch"):
+        fresh = await _fetch_batch(provider, batch, by_sym, passes=args.passes,
+                                   chunk_size=args.chunk, cache=cache, metrics=metrics)
     if hasattr(provider, "aclose"):
         await provider.aclose()
+    metrics.fetch_ok = len(fresh)
+    metrics.fetch_failed = len(batch) - len(fresh)
 
     # Ausfall-Bilanz fortschreiben: Erfolg löscht den Eintrag, Misserfolg
     # erhöht den Zähler und setzt damit den Backoff für die nächsten Läufe.
@@ -388,21 +399,46 @@ async def main() -> None:
               file=sys.stderr, flush=True)
         raise SystemExit(1)
 
+    # CHECKPOINT: Der Snapshot-Cache wird HIER gesichert, nicht erst am Ende.
+    # Die Beschaffung ist der mit Abstand teuerste Schritt (Netz, Drosselung,
+    # Minuten bis Stunden); Forecast, Pipeline und DB-Schreiben sind billig und
+    # rein lokal. Lag der Save am Ende, warf jeder Fehler danach die gesamte
+    # Beschaffung weg — real passiert am 2026-09-06: ein Fehler in der
+    # Pipeline-Phase vernichtete 4906 frisch geholte Snapshots, der nächste
+    # Lauf hätte alles erneut holen müssen. Jetzt ist der Lauf ab hier
+    # wiederaufsetzbar: Ein Neustart findet die Daten vor und überspringt die
+    # Beschaffung (sie gelten als frisch).
+    _save_cache(cache_path, cache)
+    print(f"Checkpoint: {len(cache)} Snapshots gesichert — ein Abbruch ab hier "
+          f"kostet keine erneute Beschaffung.", flush=True)
+
     print(f"Forecast-Band für {len(cache)} Werte rechnen (statistical, torch-frei) …",
           flush=True)
-    forecaster = build_forecaster("statistical")
-    await apply_forecasts(forecaster, cache, horizon=args.horizon)
-    if hasattr(forecaster, "aclose"):
-        await forecaster.aclose()
+    with metrics.phase("forecast"):
+        forecaster = build_forecaster("statistical")
+        await apply_forecasts(forecaster, cache, horizon=args.horizon)
+        if hasattr(forecaster, "aclose"):
+            await forecaster.aclose()
+
+    # Indikator-Felder zaehlen: sagt aus, wie dicht die Datenlage wirklich ist.
+    metrics.universe_scored = len(cache)
+    metrics.indicators_computed = sum(
+        len(getattr(s_, "technicals", {}) or {}) for s_ in cache.values())
 
     print(f"Pipeline über {len(cache)} Werte rechnen (cross-sectional) …", flush=True)
     engine = create_engine()                       # DATABASE_URL -> Neon Postgres (oder anderer Anbieter)
+    attach_db_counter(engine, metrics)              # zaehlt Roundtrips zur DB
     await init_models(engine)                       # idempotent; Produktions-Schema via Alembic
     sm = create_session_factory(engine)
     repo = ScreenerRepository(engine)
-    async with sm() as session:
-        res = await run_screener_pipeline(list(cache), session, repository=repo,
-                                          snapshots=cache, commit=True)
+    with metrics.phase("pipeline"):
+        async with sm() as session:
+            res = await run_screener_pipeline(list(cache), session, repository=repo,
+                                              snapshots=cache, commit=True,
+                                              metrics=metrics)
+    metrics.rows_written = res.processed
+    for tk, msg in res.errors.items():
+        metrics.note_error(tk, msg)
 
         # Waisen: Zeilen, die nicht mehr im Universum sind und deren Daten alt
         # sind. Sie werden nie wieder beschrieben und verfälschen den
@@ -441,6 +477,16 @@ async def main() -> None:
     print(f"FERTIG: {res.processed} in DB geschrieben ({len(fresh)} neu beschafft), "
           f"Stand ältester {oldest} … neuester {newest}, {time.monotonic() - t0:.0f}s",
           flush=True)
+
+    # Lauf-Kennzahlen festhalten. Ohne sie ist "ist der Screener heute sauber
+    # gelaufen?" nicht beantwortbar — bisher gab es nur die Zeilenzahl.
+    report = metrics.write(cache_path.with_name("last_run.json"))
+    print(metrics.summary(), flush=True)
+    if report["errors"]["total"]:
+        print("Fehler nach Ursache:", flush=True)
+        for kind, n in report["errors"]["by_kind"].items():
+            print(f"  {n:>5}x  {kind}  —  z.B. {report['errors']['samples'][kind]}",
+                  flush=True)
 
 
 if __name__ == "__main__":

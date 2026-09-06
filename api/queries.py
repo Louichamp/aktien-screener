@@ -27,7 +27,7 @@ _LIST_COLUMNS = (
     M.dividend_yield, M.strategy_tag, M.strategy_tags, M.status, M.rating,
     M.wlatar, M.wlafar, M.total_score, M.trend_long, M.trend_medium,
     M.risikoklasse, M.chance_rarity, M.data_as_of, M.signal_strength,
-    M.targets, M.updated_at,
+    M.data_quality, M.data_quality_label, M.targets, M.updated_at,
 )
 
 # Whitelist sortierbarer Spalten: schützt vor SQL-Injection über `sort_by`.
@@ -37,7 +37,7 @@ SORTABLE: Final[dict[str, ColumnElement]] = {
     "wlafar": M.wlafar, "total_score": M.total_score, "rating": M.rating,
     "status": M.status, "strategy": M.strategy_tag, "risk_class": M.risikoklasse,
     "data_as_of": M.data_as_of, "updated_at": M.updated_at,
-    "signal_strength": M.signal_strength,
+    "signal_strength": M.signal_strength, "data_quality": M.data_quality,
 }
 
 DEFAULT_SORT: Final[str] = "total_score"
@@ -71,6 +71,7 @@ class ScreenerFilters:
     rare_only: bool = False                    # selten/sehr selten + KAUFEN/STARK KAUFEN
     signal_strength: str | None = None         # stark | moderat | schwach
     min_signal: str | None = None              # mindestens diese Stufe
+    min_data_quality: int | None = None        # 0..100
 
 
 def _conditions(f: ScreenerFilters) -> list:
@@ -118,6 +119,8 @@ def _conditions(f: ScreenerFilters) -> list:
         allowed = [lbl for lbl, lvl in _SIGNAL_LEVEL.items()
                    if lvl >= _SIGNAL_LEVEL.get(f.min_signal, 0)]
         c.append(M.signal_strength.in_(allowed))
+    if f.min_data_quality is not None:
+        c.append(M.data_quality >= f.min_data_quality)
     if f.rare_only:
         c.append(M.chance_rarity.in_(["selten", "sehr selten"]))
         c.append(M.rating.in_(["KAUFEN", "STARK KAUFEN"]))

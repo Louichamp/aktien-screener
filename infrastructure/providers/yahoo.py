@@ -190,6 +190,7 @@ class YahooMarketDataProvider:
     async def fetch_many(self, tickers: list[str], *,
                          chunk_size: int = 50,
                          reuse_fundamentals: dict[str, dict] | None = None,
+                         metrics: Any | None = None,
                          ) -> dict[str, MarketSnapshot]:
         """Beschafft einen ganzen Block. Historie gebündelt, Stammdaten nur
         dort einzeln, wo keine brauchbaren aus einem früheren Lauf vorliegen.
@@ -204,6 +205,8 @@ class YahooMarketDataProvider:
 
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
+            if metrics is not None:
+                metrics.provider_batch_calls += 1
             try:
                 hist = await asyncio.to_thread(self._history_batch_sync, chunk)
             except Exception as exc:
@@ -221,6 +224,9 @@ class YahooMarketDataProvider:
                         return tk, {}
 
             infos: dict[str, dict] = {}
+            if metrics is not None:
+                metrics.provider_info_calls += len(need_info) if self.with_fundamentals else 0
+                metrics.fundamentals_reused += sum(1 for t in hist if t in reuse)
             if self.with_fundamentals and need_info:
                 for tk, info in await asyncio.gather(*(one_info(t) for t in need_info)):
                     infos[tk] = info

@@ -86,9 +86,23 @@ class ScoreComponentSchema(BaseModel):
     available: bool = True       # False = keine Daten, floss NICHT ein
 
 
+class DataQualitySchema(BaseModel):
+    """Woraus die Datengrundlage besteht — und was ihr fehlt."""
+    model_config = ConfigDict(extra="ignore")
+
+    score: int | None = None
+    label: str | None = None
+    components: dict[str, float] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+    bars: int | None = None
+    age_days: float | None = None
+
+
 class ScoreBreakdownSchema(BaseModel):
     """Warum dieser Gesamtscore? (JSONB-Spalte `score_breakdown`)"""
     model_config = ConfigDict(extra="ignore")
+
+    data_quality: DataQualitySchema | None = None
 
     technical: list[ScoreComponentSchema] = Field(default_factory=list)
     fundamental: list[ScoreComponentSchema] = Field(default_factory=list)
@@ -130,6 +144,10 @@ class ScreenerRowSchema(BaseModel):
     # In der Liste, weil danach gefiltert und sortiert wird; die vollständige
     # Aufschlüsselung steckt nur in der Detailsicht (Payload-Gewicht).
     signal_strength: str | None = None
+    # Belastbarkeit der Datengrundlage (0..100) samt Kurzlabel. In der Liste,
+    # damit ein Score aus Bruchstücken nicht wie ein vollständiger wirkt.
+    data_quality: int | None = None
+    data_quality_label: str | None = None
 
     targets: TargetsSchema = Field(default_factory=TargetsSchema)
     updated_at: datetime | None = None

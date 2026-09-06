@@ -19,6 +19,7 @@ from scoring import InstrumentData, ScoreEngine, ScoringContext
 
 from .base_formation import detect_base
 from .breakout_signal import evaluate_breakout
+from .data_quality import assess as assess_data_quality
 from .explain import build_breakdown
 from .levels import LevelEngine
 from .row import ScreenerRow, assemble_row
@@ -325,6 +326,7 @@ async def run_screener_pipeline(
     strategy_engine: StrategyEngine | None = None,
     currency_default: str = "USD",
     commit: bool = True,
+    metrics: Any | None = None,
 ) -> PipelineResult:
     from infrastructure.database import screener_row_to_values
 
@@ -368,6 +370,9 @@ async def run_screener_pipeline(
             cinp = ClassifierInput(s.instrument_id, tk, scored, plan, _technical_state(s), s.forecast)
             cls = classifier.classify(cinp, memories[tk])
             per[tk] = {"scored": scored, "plan": plan, "cinp": cinp, "cls": cls, "snap": s}
+            if metrics is not None:
+                metrics.scores_computed += sum(1 for r in scored.results.values()
+                                               if getattr(r, "ok", False))
         except Exception as exc:
             errors[tk] = f"phase1: {exc}"
 
@@ -391,14 +396,34 @@ async def run_screener_pipeline(
         row = assemble_row(cinp, cls, assignment)
         # Nutzt ausschliesslich bereits berechnete Sub-Scores — kein neuer Aufwand.
         bd = build_breakdown(scored, score_engine.composites, score_engine.computors)
+        # Belastbarkeit der Datengrundlage — trennt einen Score aus voller
+        # Historie von einem gleich aussehenden aus Bruchstuecken.
+        try:
+            dq = assess_data_quality(s.candles, s.technicals, s.fundamentals,
+                                     as_of=s.as_of)
+        except Exception:
+            dq = None
+        if metrics is not None:
+            # Vollstaendig heisst: fast alle Faktoren lagen mit echten Daten vor.
+            # Ein Score auf halber Datenlage darf in der Statistik nicht wie ein
+            # vollstaendiger aussehen — genau das war bisher unsichtbar.
+            if scored.technical_rating is None:
+                metrics.score_none += 1
+            elif bd.coverage >= 0.9:
+                metrics.score_full += 1
+            else:
+                metrics.score_partial += 1
         try:
             values = screener_row_to_values(
                 row, price=s.price, currency=s.currency or currency_default,
                 name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
                 dividend_yield=s.fundamentals.get("dividend_yield"),
                 drivers=_build_drivers(scored, plan, cls, s),
-                score_breakdown=bd.to_dict(),
+                score_breakdown={**bd.to_dict(),
+                                 "data_quality": dq.to_dict() if dq else None},
                 signal_strength=bd.signal_strength,
+                data_quality=(dq.score if dq else None),
+                data_quality_label=(dq.label if dq else None),
                 forecast_history=_forecast_history(s.forecast),
                 price_history=_price_history(s.candles),
                 forecast_return=_forecast_return(s.forecast, s.price),

@@ -27,11 +27,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# Die vier Faktoren, deren Übereinstimmung einen Treffer trägt. Bewusst
-# UNABHÄNGIGE Dimensionen — Richtung, Schwung, Vergleich zum Markt, Bestätigung
-# durch Umsatz. Vier gleichartige Momentum-Indikatoren wären keine Bestätigung,
-# sondern dieselbe Aussage in vier Varianten.
-CORE_FACTORS: tuple[str, ...] = ("trend", "momentum", "rel_strength", "volume")
+# Unabhängige Faktor-GRUPPEN, nicht einzelne Faktoren.
+#
+# Die erste Fassung zählte trend, momentum, rel_strength und volume als vier
+# unabhängige Bestätigungen. Die Messung am Querschnitt (scripts/audit_scores.py,
+# 318 S&P- und 464 Small/Mid-Titel) widerlegt das deutlich:
+#
+#   rel_strength <-> market_leadership   0,92
+#   volume       <-> institutional_demand 0,90
+#   trend        <-> momentum             0,86
+#   rel_strength <-> momentum             0,83
+#   trend        <-> rel_strength         0,82
+#
+# Acht Faktoren enthalten effektiv nur ~4,2 bis 4,7 unabhängige Signale. Drei
+# der vier vermeintlich eigenständigen Bestätigungen gehören demselben Cluster
+# an: Eine Aktie in einem intakten Aufwärtstrend "bestätigt" sich dadurch
+# automatisch dreifach, ohne dass eine zweite Informationsquelle hinzukäme.
+#
+# Deshalb zählt jetzt EINE Bestätigung je Gruppe. Die Gruppierung stammt aus
+# der gemessenen Korrelationsstruktur, die in beiden Universen identisch
+# ausfiel — sie ist damit eine strukturelle Eigenschaft der Faktoren, keine
+# Anpassung an eine bestimmte Stichprobe.
+FACTOR_GROUPS: dict[str, tuple[str, ...]] = {
+    "Trendstärke": ("trend", "momentum", "rel_strength", "market_leadership"),
+    "Volumen": ("volume", "institutional_demand"),
+    "Ausbruchslage": ("breakout",),
+    "Einstiegslage": ("setup",),
+}
 
 CONFIRM_AT = 6.5          # ab diesem Sub-Score (0..10) gilt ein Faktor als bestätigend
 CONTRA_AT = 4.0           # darunter spricht er aktiv dagegen
@@ -117,26 +139,38 @@ def _components(results: dict[str, Any], weights: dict[str, float],
     return out, present_w / total_w
 
 
+def _group_score(results: dict[str, Any], slugs: tuple[str, ...]) -> float | None:
+    """Aussage einer Faktor-Gruppe = Mittel ihrer verfügbaren Mitglieder.
+
+    Innerhalb einer Gruppe sind die Faktoren hoch korreliert; ihr Mittelwert
+    ist deshalb eine stabilere Schätzung derselben Aussage als jeder einzelne
+    — und zählt trotzdem nur EINMAL.
+    """
+    vals = [float(getattr(r, "score", 0.0)) for r in
+            (results.get(s) for s in slugs)
+            if r is not None and getattr(r, "ok", False)]
+    return sum(vals) / len(vals) if vals else None
+
+
 def _classify(results: dict[str, Any]) -> tuple[str, list[str], list[str]]:
-    """Signalstärke aus der Übereinstimmung der Kernfaktoren."""
+    """Signalstärke aus der Übereinstimmung UNABHÄNGIGER Faktor-Gruppen."""
     confirming, contradicting, known = [], [], 0
-    for slug in CORE_FACTORS:
-        res = results.get(slug)
-        if res is None or not getattr(res, "ok", False):
+    for name, slugs in FACTOR_GROUPS.items():
+        v = _group_score(results, slugs)
+        if v is None:
             continue
         known += 1
-        s = float(getattr(res, "score", 0.0))
-        if s >= CONFIRM_AT:
-            confirming.append(slug)
-        elif s <= CONTRA_AT:
-            contradicting.append(slug)
+        if v >= CONFIRM_AT:
+            confirming.append(name)
+        elif v <= CONTRA_AT:
+            contradicting.append(name)
 
-    # Ohne Datenlage keine Einstufung — lieber „kein Signal" als eine
-    # Stärkeangabe, die auf einem einzigen verfügbaren Faktor beruht.
+    # Ohne mindestens zwei belegte Gruppen keine Einstufung — aus einer
+    # einzelnen Informationsquelle lässt sich keine Übereinstimmung ableiten.
     if known < 2:
         return SignalStrength.NONE, confirming, contradicting
     n = len(confirming)
-    if n >= 4 or (n == 3 and known == 3 and not contradicting):
+    if n >= 3 and not contradicting:
         strength = SignalStrength.STRONG
     elif n >= 2 and len(contradicting) <= 1:
         strength = SignalStrength.MODERATE
