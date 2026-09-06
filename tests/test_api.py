@@ -765,7 +765,13 @@ async def test_writeback_isolates_bad_ticker_from_rest_of_batch(fresh_db):
     geschrieben. begin_nested() pro Ticker (screener/pipeline.py) verhindert
     das. SQLite (Test-DB) erzwingt anders als Postgres keine VARCHAR-Längen,
     daher wird der Fehler hier direkt am Repository simuliert — getestet wird
-    der Isolations-Mechanismus, nicht Postgres' eigene Constraint-Prüfung."""
+    der Isolations-Mechanismus, nicht Postgres' eigene Constraint-Prüfung.
+
+    Geschrieben wird inzwischen GEBÜNDELT (ein Statement je Block statt vier
+    Roundtrips je Titel). Der Test patcht deshalb BEIDE Wege: Der Block muss
+    scheitern wie in Postgres, wo eine einzige verletzte Zeile das ganze
+    Statement zurückrollt — und der anschließende Einzelversuch muss den
+    Schuldigen herausfinden, ohne die gesunden Titel zu verlieren."""
     url, engine, sm = fresh_db
     good = build_snapshot("GOOD", price=50.0)
     bad = build_snapshot("BAD", price=50.0)
@@ -777,6 +783,14 @@ async def test_writeback_isolates_bad_ticker_from_rest_of_batch(fresh_db):
             raise ValueError("simulierte Constraint-Verletzung (z.B. StringDataRightTruncation)")
         return await real_upsert(session, values)
     repo.upsert_screener_row = flaky_upsert
+
+    real_bulk = repo.upsert_screener_rows
+    async def flaky_bulk(session, rows):
+        # Wie Postgres: eine verletzte Zeile lässt das gesamte Statement scheitern.
+        if any(v["ticker"] == "BAD" for v in rows):
+            raise ValueError("simulierte Constraint-Verletzung im Block")
+        return await real_bulk(session, rows)
+    repo.upsert_screener_rows = flaky_bulk
 
     async with sm() as session:
         res = await run_screener_pipeline(

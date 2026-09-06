@@ -136,6 +136,28 @@ class ScreenerRepository:
         return StatusMemory(status=m.current_status, pending=m.pending_status,
                             pending_count=m.confirm_runs)
 
+    async def get_status_memories(self, session: AsyncSession,
+                                  tickers: list[str]) -> dict[str, StatusMemory]:
+        """Hysterese für viele Ticker in EINER Abfrage.
+
+        Zuvor lief pro Ticker ein eigenes `session.get()` — bei 5086 Titeln
+        also 5086 Netzwerk-Roundtrips, nur um den vorherigen Status zu lesen.
+        """
+        if not tickers:
+            return {}
+        out: dict[str, StatusMemory] = {}
+        # In Blöcken, damit die IN-Liste nicht die Parametergrenze sprengt.
+        for i in range(0, len(tickers), 2000):
+            chunk = tickers[i:i + 2000]
+            rows = (await session.execute(
+                select(StatusMemoryModel).where(
+                    StatusMemoryModel.ticker.in_(chunk)))).scalars().all()
+            for m in rows:
+                out[m.ticker] = StatusMemory(status=m.current_status,
+                                             pending=m.pending_status,
+                                             pending_count=m.confirm_runs)
+        return out
+
     async def upsert_status_memory(self, session: AsyncSession, ticker: str,
                                    memory: StatusMemory) -> None:
         values = dict(ticker=ticker, current_status=memory.status,
@@ -153,6 +175,43 @@ class ScreenerRepository:
         stmt = self._insert(ScreenerRowModel).values(**values)
         update_cols = {k: getattr(stmt.excluded, k) for k in values if k != "ticker"}
         stmt = stmt.on_conflict_do_update(index_elements=["ticker"], set_=update_cols)
+        await session.execute(stmt)
+
+    async def upsert_screener_rows(self, session: AsyncSession,
+                                   rows: list[dict[str, Any]]) -> None:
+        """Viele Zeilen in EINER Anweisung schreiben.
+
+        Der Write-Back lief bisher Zeile für Zeile, jede in einer eigenen
+        SAVEPOINT-Klammer — also rund vier Netzwerk-Roundtrips pro Titel
+        (SAVEPOINT, zwei Upserts, RELEASE). Bei 5086 Titeln sind das über
+        20.000 Roundtrips zur Datenbank. Gemessen am Lauf vom 2026-09-05:
+        die reine Rechenzeit betrug 2,5 Minuten, der Lauf dauerte 84 —
+        der Rest war Wartezeit auf das Netz.
+
+        Alle Zeilen müssen dieselben Spalten haben; `screener_row_to_values`
+        garantiert das. PostgreSQL erlaubt 65535 Parameter je Anweisung, bei
+        ~28 Spalten also gut 2300 Zeilen — der Aufrufer stückelt entsprechend.
+        """
+        if not rows:
+            return
+        stmt = self._insert(ScreenerRowModel).values(rows)
+        update_cols = {k: getattr(stmt.excluded, k) for k in rows[0] if k != "ticker"}
+        stmt = stmt.on_conflict_do_update(index_elements=["ticker"], set_=update_cols)
+        await session.execute(stmt)
+
+    async def upsert_status_memories(self, session: AsyncSession,
+                                     memories: list[tuple[str, StatusMemory]]) -> None:
+        """Hysterese-Zustände gebündelt schreiben (siehe upsert_screener_rows)."""
+        if not memories:
+            return
+        values = [dict(ticker=tk, current_status=m.status, pending_status=m.pending,
+                       confirm_runs=m.pending_count) for tk, m in memories]
+        stmt = self._insert(StatusMemoryModel).values(values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["ticker"],
+            set_=dict(current_status=stmt.excluded.current_status,
+                      pending_status=stmt.excluded.pending_status,
+                      confirm_runs=stmt.excluded.confirm_runs))
         await session.execute(stmt)
 
     async def get_screener_row(self, session: AsyncSession, ticker: str) -> ScreenerRowModel | None:

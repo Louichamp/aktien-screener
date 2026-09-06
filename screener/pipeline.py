@@ -258,6 +258,57 @@ def _build_drivers(scored: Any, plan: Any, cls: Classification,
     return out
 
 
+# Wie viele Zeilen pro Anweisung geschrieben werden. PostgreSQL erlaubt 65535
+# Parameter je Statement; bei ~28 Spalten sind gut 2300 Zeilen möglich — 200
+# hält Abstand und begrenzt zugleich, wie viel ein Fehlschlag zurückwirft.
+_WRITE_CHUNK = 200
+
+
+async def _write_back(db_session: Any, repository: Any,
+                      pending: list[tuple[str, dict[str, Any], Any, Any]],
+                      rows: list[ScreenerRow], errors: dict[str, str]) -> None:
+    """Ergebnisse schreiben — gebündelt, aber ohne die Fehlerisolierung zu verlieren.
+
+    Der Write-Back lief zuvor Zeile für Zeile in je eigener SAVEPOINT-Klammer:
+    rund vier Netzwerk-Roundtrips pro Titel. Gemessen am Lauf vom 2026-09-05
+    betrug die reine Rechenzeit für 5086 Titel 2,5 Minuten, der Lauf dauerte
+    84 — der Rest war Warten auf die Datenbank.
+
+    Die Isolierung bleibt trotzdem erhalten: Scheitert ein Block, wird
+    ausschließlich DIESER Block noch einmal einzeln geschrieben. Damit kostet
+    ein kaputter Datensatz einen Block statt des ganzen Laufs — und der
+    Normalfall kostet einen Roundtrip statt vierhundert.
+    """
+    bulk = (hasattr(repository, "upsert_screener_rows")
+            and hasattr(repository, "upsert_status_memories"))
+
+    async def one_by_one(batch: list[tuple[str, dict[str, Any], Any, Any]]) -> None:
+        for tk, values, row, memory in batch:
+            try:
+                async with db_session.begin_nested():
+                    await repository.upsert_screener_row(db_session, values)
+                    await repository.upsert_status_memory(db_session, tk, memory)
+                rows.append(row)
+            except Exception as exc:           # ein Ticker darf den Lauf nie killen
+                errors[tk] = f"writeback: {exc}"
+
+    if not bulk:
+        await one_by_one(pending)
+        return
+
+    for i in range(0, len(pending), _WRITE_CHUNK):
+        chunk = pending[i:i + _WRITE_CHUNK]
+        try:
+            async with db_session.begin_nested():
+                await repository.upsert_screener_rows(db_session, [v for _, v, _, _ in chunk])
+                await repository.upsert_status_memories(
+                    db_session, [(tk, m) for tk, _, _, m in chunk])
+            rows.extend(row for _, _, row, _ in chunk)
+        except Exception:
+            # Welcher Datensatz es war, weiss nur der Einzelversuch.
+            await one_by_one(chunk)
+
+
 # --------------------------------------------------------------------------- #
 #  Runner
 # --------------------------------------------------------------------------- #
@@ -296,8 +347,14 @@ async def run_screener_pipeline(
             snaps[tk] = s
         except Exception as exc:
             errors[tk] = f"ingest: {exc}"
-    memories = {tk: (await repository.get_status_memory(db_session, tk) or StatusMemory())
-                for tk in snaps}
+    # Hysterese gebündelt lesen, wenn das Repository es kann — sonst wie
+    # bisher einzeln (Stub-Repositories in Tests haben die Methode nicht).
+    if hasattr(repository, "get_status_memories"):
+        loaded = await repository.get_status_memories(db_session, list(snaps))
+        memories = {tk: loaded.get(tk) or StatusMemory() for tk in snaps}
+    else:
+        memories = {tk: (await repository.get_status_memory(db_session, tk) or StatusMemory())
+                    for tk in snaps}
 
     # --- Phase 1: Scoring (geteilter Kontext) + Zonen/Level + Status ----------
     instruments = [_instrument_data(s) for s in snaps.values()]
@@ -327,31 +384,32 @@ async def run_screener_pipeline(
     # TruncationError bei einem 166-Zeichen-Namen brach 3 Tage in Folge den
     # kompletten täglichen Cron-Lauf, kein einziger Ticker wurde geschrieben).
     rows: list[ScreenerRow] = []
+    pending: list[tuple[str, dict[str, Any], ScreenerRow, Any]] = []
     for tk, d in per.items():
         scored, plan, cinp, cls, s = d["scored"], d["plan"], d["cinp"], d["cls"], d["snap"]
         assignment = assignments.get(s.instrument_id)
         row = assemble_row(cinp, cls, assignment)
         # Nutzt ausschliesslich bereits berechnete Sub-Scores — kein neuer Aufwand.
         bd = build_breakdown(scored, score_engine.composites, score_engine.computors)
-        values = screener_row_to_values(
-            row, price=s.price, currency=s.currency or currency_default,
-            name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
-            dividend_yield=s.fundamentals.get("dividend_yield"),
-            drivers=_build_drivers(scored, plan, cls, s),
-            score_breakdown=bd.to_dict(),
-            signal_strength=bd.signal_strength,
-            forecast_history=_forecast_history(s.forecast),
-            price_history=_price_history(s.candles),
-            forecast_return=_forecast_return(s.forecast, s.price),
-            forecast_method=(s.forecast or {}).get("method"),
-            data_as_of=s.as_of)
         try:
-            async with db_session.begin_nested():
-                await repository.upsert_screener_row(db_session, values)
-                await repository.upsert_status_memory(db_session, tk, cls.memory)
-            rows.append(row)
-        except Exception as exc:                   # ein Ticker darf den Lauf nie killen
-            errors[tk] = f"writeback: {exc}"
+            values = screener_row_to_values(
+                row, price=s.price, currency=s.currency or currency_default,
+                name=s.name, sector=s.sector, country=s.country, asset_class=s.asset_class,
+                dividend_yield=s.fundamentals.get("dividend_yield"),
+                drivers=_build_drivers(scored, plan, cls, s),
+                score_breakdown=bd.to_dict(),
+                signal_strength=bd.signal_strength,
+                forecast_history=_forecast_history(s.forecast),
+                price_history=_price_history(s.candles),
+                forecast_return=_forecast_return(s.forecast, s.price),
+                forecast_method=(s.forecast or {}).get("method"),
+                data_as_of=s.as_of)
+        except Exception as exc:
+            errors[tk] = f"serialisierung: {exc}"
+            continue
+        pending.append((tk, values, row, cls.memory))
+
+    await _write_back(db_session, repository, pending, rows, errors)
 
     if commit:
         await db_session.commit()
