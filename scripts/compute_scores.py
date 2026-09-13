@@ -172,6 +172,32 @@ def _select_oldest(universe_tickers: list[str], cache: dict, n: int,
     return sorted(eligible, key=key)[:n]
 
 
+# Ab wie vielen Ausfaellen in Folge ein Symbol als "dauerhaft tot" statt nur
+# "gerade in Backoff" gilt. Bei 7 Ausfaellen ist _backoff_days() bereits beim
+# Maximalwert von 30 Tagen angekommen -- ab dann lohnt kein weiterer Versuch
+# mehr innerhalb des begrenzten Universums.
+PERMANENT_DEAD_FAILS = 7
+
+
+def _exclude_dead_symbols(universe: list[dict], failures: dict[str, dict],
+                          threshold: int = PERMANENT_DEAD_FAILS,
+                          ) -> tuple[list[dict], set[str]]:
+    """Entfernt dauerhaft scheiternde Symbole (z. B. illiquide Pennystocks,
+    SPAC-Warrants/-Units ohne brauchbare Yahoo-Daten) aus dem Universum.
+
+    Sie belegen sonst auf ewig einen der `--limit` Plaetze und verfaelschen
+    den ausgewiesenen "aeltesten Stand", obwohl fuer sie nie frische Daten
+    ankommen werden. Einmal ausgeschlossen werden sie zu echten Waisen (nicht
+    mehr im Universum) und raeumen sich ueber --prune-orphans von selbst weg,
+    sobald ihre DB-Zeile alt genug ist -- das schafft automatisch wieder
+    Platz fuer neue Ticker aus der taeglich frisch geladenen Boersen-Liste.
+    """
+    dead = {t for t, rec in failures.items() if int(rec.get("fails", 0)) >= threshold}
+    if not dead:
+        return universe, dead
+    return [e for e in universe if e["symbol"] not in dead], dead
+
+
 # Fundamentaldaten wechseln quartalsweise, nicht taeglich. Sie trotzdem bei
 # jedem Lauf erneut zu holen war — neben dem Einzelabruf der Historie — der
 # Grund fuer ~3000 Anfragen pro Lauf und damit fuer die Drosselung.
@@ -326,12 +352,19 @@ async def main() -> None:
     print(f"Universe laden (limit={args.limit}, source={args.source}) …", flush=True)
     with metrics.phase("universe"):
         universe = await build_universe(args.limit, source=args.source)
-    by_sym = {e["symbol"]: e for e in universe}
-    universe_tickers = list(by_sym)
-    universe_set = set(universe_tickers)
 
     failures_path = cache_path.with_name("fetch_failures.json")
     failures = _load_failures(failures_path)
+
+    universe, dead_symbols = _exclude_dead_symbols(universe, failures)
+    if dead_symbols:
+        print(f"Dauerhaft tote Symbole ausgeschlossen: {len(dead_symbols)} "
+              f"(>= {PERMANENT_DEAD_FAILS} Ausfälle in Folge, z. B. "
+              f"{', '.join(sorted(dead_symbols)[:8])})", flush=True)
+
+    by_sym = {e["symbol"]: e for e in universe}
+    universe_tickers = list(by_sym)
+    universe_set = set(universe_tickers)
 
     refresh_all = str(args.refresh).lower() == "all"
     n = len(universe_tickers) if refresh_all else max(0, int(args.refresh))
@@ -345,10 +378,12 @@ async def main() -> None:
     skipped = sum(1 for t in universe_tickers if _in_backoff(failures.get(t), now))
     metrics.skipped_backoff = skipped
     if skipped:
-        dead = sum(1 for t in universe_tickers
-                   if int(failures.get(t, {}).get("fails", 0)) >= 7)
-        print(f"Backoff: {skipped} Titel zurückgestellt ({dead} davon dauerhaft "
-              f"auffällig, >= 7 Ausfälle)", flush=True)
+        # Dauerhaft tote Symbole (>= PERMANENT_DEAD_FAILS) sind an dieser Stelle
+        # bereits aus universe_tickers ausgeschlossen (s.o.) -- was hier noch
+        # zurueckgestellt wird, ist vorlaeufiger Backoff, der sich noch erholen
+        # kann (z. B. echtes Yahoo-Throttling statt eines toten Symbols).
+        print(f"Backoff: {skipped} Titel vorlaeufig zurückgestellt (noch keine "
+              f"{PERMANENT_DEAD_FAILS} Ausfälle in Folge)", flush=True)
 
     cached_total = len(cache)
     missing = len([t for t in universe_tickers if t not in cache])

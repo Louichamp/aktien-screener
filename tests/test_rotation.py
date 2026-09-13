@@ -11,8 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from scripts.compute_scores import (_backoff_days, _in_backoff,
-                                    _reusable_fundamentals, _select_oldest)
+from scripts.compute_scores import (_backoff_days, _exclude_dead_symbols,
+                                    _in_backoff, _reusable_fundamentals,
+                                    _select_oldest)
 
 
 @dataclass
@@ -85,6 +86,36 @@ def test_abgelaufener_backoff_wird_wieder_versucht():
 def test_ohne_fehlerliste_unveraendertes_verhalten():
     cache = {"A": _Snap(_iso(5)), "B": _Snap(_iso(2))}
     assert _select_oldest(["A", "B"], cache, 2) == ["A", "B"]
+
+
+# --------------------------------------------------------------------------- #
+#  Dauerhaft tote Symbole aus dem Universum ausschliessen
+# --------------------------------------------------------------------------- #
+def test_dauerhaft_tote_symbole_fliegen_aus_dem_universum():
+    """Der eigentliche Fix fuer die verfaelschte 'aeltester Stand'-Anzeige:
+    ein Symbol mit >= 7 Ausfaellen in Folge belegt keinen Platz mehr."""
+    universe = [{"symbol": "GUT"}, {"symbol": "TOT"}]
+    failures = {"TOT": {"fails": 7, "last": "2026-07-14T00:00:00+00:00"}}
+    kept, dead = _exclude_dead_symbols(universe, failures)
+    assert [e["symbol"] for e in kept] == ["GUT"]
+    assert dead == {"TOT"}
+
+
+def test_symbole_unter_der_schwelle_bleiben_im_universum():
+    """Vorlaeufiger Backoff (noch keine 7 Ausfaelle) darf sich noch erholen
+    -- diese Symbole duerfen nicht dauerhaft ausgeschlossen werden."""
+    universe = [{"symbol": "A"}, {"symbol": "B"}]
+    failures = {"B": {"fails": 6, "last": "2026-09-01T00:00:00+00:00"}}
+    kept, dead = _exclude_dead_symbols(universe, failures)
+    assert [e["symbol"] for e in kept] == ["A", "B"]
+    assert dead == set()
+
+
+def test_ohne_fehlerliste_bleibt_universum_unveraendert():
+    universe = [{"symbol": "A"}, {"symbol": "B"}]
+    kept, dead = _exclude_dead_symbols(universe, {})
+    assert kept == universe
+    assert dead == set()
 
 
 # --------------------------------------------------------------------------- #
