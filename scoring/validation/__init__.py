@@ -14,6 +14,10 @@ deterministischen, abhängigkeitsfreien Bausteinen:
                        tragen (Korrelations-Pruning, effektive Informationsdichte).
   • decision.py      — Entscheidungs-Qualität je Titel (Coverage, Signal-Agreement,
                        Instabilität, Ranking-Konfidenz) — das finale Output-Layer.
+  • panel.py         — gemeinsame Stichtagsachse: richtet Querschnitte an echten
+                       Handelstagen aus statt am Listenindex (sonst bedeutet
+                       derselbe Index bei unterschiedlich langen Historien für
+                       jeden Titel einen anderen Kalendertag).
 
 Die Produktions-Scoring-Pfade bleiben unberührt: dieses Paket liefert Diagnostik
 und (über die Offline-Kalibrierung) optionale, evidenzbasierte Gewichte. Ohne
@@ -25,6 +29,7 @@ from .ic import (ICStats, ic_summary, rank_ic, regularized_weights,
                  signal_half_life)
 from .decision import DecisionQuality, decision_quality
 from .orthogonality import correlation_matrix, redundancy_report
+from .panel import PanelCalendar, build_panel_calendar
 from .regime import RegimeSnapshot, classify_regime
 
 __all__ = [
@@ -32,4 +37,5 @@ __all__ = [
     "RegimeSnapshot", "classify_regime",
     "correlation_matrix", "redundancy_report",
     "DecisionQuality", "decision_quality",
+    "PanelCalendar", "build_panel_calendar",
 ]

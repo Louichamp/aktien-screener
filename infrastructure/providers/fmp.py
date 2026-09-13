@@ -144,7 +144,8 @@ class FMPMarketDataProvider:
             try:
                 candles.append(Candle(
                     o=float(row["open"]), h=float(row["high"]), l=float(row["low"]),
-                    c=float(row["close"]), v=float(row.get("volume") or 0.0)))
+                    c=float(row["close"]), v=float(row.get("volume") or 0.0),
+                    ts=(str(row.get("date"))[:10] or None) if row.get("date") else None))
             except (KeyError, TypeError, ValueError):
                 continue
         return candles

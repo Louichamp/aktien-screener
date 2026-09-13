@@ -29,11 +29,39 @@ class ZoneCategory:
 
 @dataclass(slots=True)
 class Candle:
+    """Eine Tageskerze. `ts` ist das ISO-Datum des Handelstags (`YYYY-MM-DD`).
+
+    Warum ein Datum: Ohne Zeitstempel lassen sich Querschnitte im Backtest nur
+    ueber den Listenindex bilden. Da Titel unterschiedlich lange Historien
+    haben, bedeutet derselbe Index dann fuer jeden Titel einen ANDEREN
+    Kalendertag — der Querschnitt vermischt Zeitpunkte. Rang-IC und
+    Regime-Klassifikation setzen aber denselben Stichtag voraus.
+
+    `ts` ist optional, damit aeltere Caches ohne Datum weiter lesbar bleiben
+    (siehe `__setstate__`). Ein ISO-String statt `date` haelt die Pickles
+    schlank und sortiert lexikographisch korrekt chronologisch.
+    """
     o: float
     h: float
     l: float
     c: float
     v: float
+    ts: str | None = None
+
+    def __setstate__(self, state: Any) -> None:
+        """Entpickelt auch Kerzen, die noch OHNE `ts` geschrieben wurden.
+
+        `slots=True` haelt keine Klassen-Defaults vor: ein Slot, der im
+        gespeicherten Zustand fehlt, bliebe ungesetzt und wuerde beim Zugriff
+        eine AttributeError werfen. Ohne diesen Haken waere der gesamte
+        Snapshot-Cache (GitHub-Actions) unlesbar und ein vollstaendiger
+        Neuabruf aller Titel noetig.
+        """
+        slots = state[1] if isinstance(state, tuple) else state
+        for name, value in (slots or {}).items():
+            setattr(self, name, value)
+        if not hasattr(self, "ts"):
+            self.ts = None
 
 
 @dataclass(slots=True)

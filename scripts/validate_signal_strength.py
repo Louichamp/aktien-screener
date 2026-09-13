@@ -25,6 +25,7 @@ Bekannte Grenzen, die das Ergebnis einschränken und NICHT wegzurechnen sind:
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 import statistics
 import sys
@@ -36,16 +37,40 @@ sys.path.insert(0, str(ROOT))
 
 from infrastructure.providers.indicators import technicals_from_candles
 from scoring import InstrumentData, ScoreEngine, ScoringContext
+from scoring.validation import build_panel_calendar
 from screener.explain import SignalStrength, build_breakdown
 
-SECTORS = ["Technology", "Healthcare", "Financials", "Energy", "Consumer",
-           "Industrials", "Utilities", "Materials"]
+# Eingangsfenster wie in Produktion (YF_KEEP_CANDLES); vorher fest 400 Bars.
+SCORING_WINDOW = int(os.getenv("YF_KEEP_CANDLES", "260"))
 ORDER = [SignalStrength.STRONG, SignalStrength.MODERATE,
          SignalStrength.WEAK, SignalStrength.NONE]
 
 MIN_PRICE = 5.0
 MIN_DOLLAR_VOL = 1_000_000.0
 CAP = 1.0                       # Renditen kappen — ein Ausreißer darf nicht dominieren
+
+
+def _load_peer_meta(path: str | None) -> dict[str, dict]:
+    """Echte Branche/Sektor/Marktkapitalisierung je Ticker.
+
+    Frueher wurden hier Platzhalter gesetzt (Sektor per Round-Robin,
+    market_cap konstant 1e9). Dadurch verlor `market_leadership` drei seiner
+    vier Faktoren und reduzierte sich auf ret_3m — die Hauptkomponente von
+    `rel_strength`. Die daraus gemessene Korrelation zwischen beiden war ein
+    Artefakt der Messbedingungen.
+    """
+    if not path:
+        return {}
+    try:
+        with open(path, "rb") as fh:
+            snaps = pickle.load(fh)
+    except (OSError, ValueError, pickle.UnpicklingError) as exc:
+        print(f"Peer-Kontext nicht lesbar ({exc}) — ohne Branchenangaben.")
+        return {}
+    return {tk: {"sector": getattr(s, "sector", None),
+                 "industry": getattr(s, "industry", None),
+                 "market_cap": getattr(s, "market_cap", None)}
+            for tk, s in snaps.items()}
 
 
 def _liquid(candles, t: int) -> bool:
@@ -62,6 +87,9 @@ def main() -> int:
     ap.add_argument("--step", type=int, default=21, help="Bar-Abstand der Stichtage")
     ap.add_argument("--min-history", type=int, default=300)
     ap.add_argument("--horizons", default="5,20,60")
+    ap.add_argument("--meta-from", default=None,
+                    help="Snapshot-Cache (z.B. .cache/full_snaps.pkl) fuer echte "
+                         "Branche/Sektor/Marktkapitalisierung statt Platzhalter")
     args = ap.parse_args()
 
     horizons = [int(h) for h in args.horizons.split(",")]
@@ -74,7 +102,18 @@ def main() -> int:
           f"Stichtage alle {args.step} Bars\n")
 
     engine = ScoreEngine()
-    max_len = max(len(c) for c in store.values())
+    meta_map = _load_peer_meta(args.meta_from)
+    cal = build_panel_calendar(store)
+    if not cal.dated:
+        print("WARNUNG: Kerzen ohne Datum — Ausrichtung vom Reihenende statt "
+              "nach Handelstag.\n")
+    have_peers = sum(1 for tk in store if meta_map.get(tk, {}).get("industry")
+                     or meta_map.get(tk, {}).get("sector"))
+    if not have_peers:
+        print("WARNUNG: kein echter Branchen-/Sektor-Kontext (--meta-from). "
+              "Alle Peer-Perzentile fallen auf 'universe' zurueck; "
+              "rel_strength/market_leadership messen dann NICHT das "
+              "Produktionsverhalten.\n")
 
     # buckets[strength][h] -> Liste von Vorwärtsrenditen
     buckets: dict[str, dict[int, list[float]]] = defaultdict(
@@ -82,23 +121,29 @@ def main() -> int:
     all_returns: dict[int, list[float]] = defaultdict(list)
     n_dates = 0
 
-    for t in range(args.min_history, max_len - max_h, args.step):
+    for j in cal.positions(min_history=args.min_history, horizon=max_h,
+                           step=args.step):
         insts, meta = [], []
-        for i, (tk, candles) in enumerate(store.items()):
-            if t >= len(candles) or not _liquid(candles, t):
+        for tk, candles in store.items():
+            t = cal.index_at(tk, j)
+            if t is None or t < args.min_history or not _liquid(candles, t):
                 continue
-            hist = candles[: t + 1]                 # nur Vergangenheit
-            price = hist[-1].c
+            price = candles[t].c
             if price <= 0:
                 continue
+            # Gleiches Eingangsfenster wie die Produktion (YF_KEEP_CANDLES).
+            hist = candles[max(0, t - SCORING_WINDOW + 1): t + 1]
+            pm = meta_map.get(tk, {})
             insts.append(InstrumentData(
                 instrument_id=tk, ticker=tk, asset_class="Aktie",
-                sector=SECTORS[i % len(SECTORS)], industry=None, market_cap=1e9,
-                technicals=technicals_from_candles(hist[-400:], price=price),
+                sector=pm.get("sector"), industry=pm.get("industry"),
+                market_cap=pm.get("market_cap"),
+                technicals=technicals_from_candles(hist, price=price),
                 fundamentals={}))
             fwd = {}
             for h in horizons:
-                e = min(t + h, len(candles) - 1)
+                e = cal.index_at(tk, min(j + h, cal.n - 1))
+                e = t if e is None else max(e, t)
                 fwd[h] = max(-CAP, min(CAP, candles[e].c / price - 1.0))
             meta.append((tk, fwd))
 

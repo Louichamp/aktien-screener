@@ -197,3 +197,131 @@ Neu: `tests/test_valuation.py` (9), `tests/test_structure_counts.py` (7),
 
 Zusätzlich als Integrationsprüfung auf 596 echten Titeln: keine
 Berechnungsfehler, keine NaN/inf-Werte.
+
+---
+
+## 2026-09-13 — P1: Messvalidität (L1, L2, L3/L4, L5)
+
+Voraussetzung für jede datenbasierte Gewichtsänderung. Solange die Messung ein
+anderes System beschreibt als das produktive, optimiert man auf ein Artefakt.
+**Der Produktions-Scoringpfad ist von diesen Änderungen nicht betroffen** —
+geändert wurden die Datenerfassung (Datumsfeld) und die Mess-Skripte.
+
+### L1 — `Candle` hat jetzt einen Handelstag
+
+**OLD** `Candle(o, h, l, c, v)` — kein Zeitstempel. Der DatetimeIndex der
+Datenquelle wurde durch `itertuples(index=False)` bewusst verworfen.
+
+**NEW** Optionales Feld `ts` (ISO-Datum). Gefüllt von Yahoo- und FMP-Provider
+sowie `backtest_base.load_candles`.
+
+**WHY** Ohne Datum lassen sich Querschnitte nur über den Listenindex bilden —
+die Ursache von L2.
+
+**RISK / Absicherung** `Candle` nutzt `__slots__` und wird gepickelt im
+GitHub-Actions-Cache abgelegt. Ein zusätzlicher Slot bliebe beim Entpickeln
+alter Daten *ungesetzt* und würde beim Zugriff eine `AttributeError` werfen —
+der gesamte Snapshot-Cache wäre unlesbar und ein vollständiger Neuabruf aller
+5.000 Titel nötig. Abgefangen über ein explizites `__setstate__`.
+**Verifiziert an den echten Caches:** `full_snaps.pkl` (4.906), 
+`backtest_candles_12y.pkl` (318) und `smallcap_12y.pkl` (464) laden
+unverändert, `ts` fällt korrekt auf `None`.
+
+**Verifikation end-to-end:** Live-Abruf von AAPL/MSFT/KO liefert je 127 Kerzen
+mit durchgehenden Datumsangaben; der Panel-Kalender erkennt `dated=True` und
+löst den Stichtag 2026-06-11 bei allen drei Titeln auf denselben Kalendertag auf.
+
+### L2 — Querschnitte laufen auf einer gemeinsamen Handelstagsachse
+
+**OLD**
+```python
+for t in range(min_history, max_len - max_h, step):
+    hist = candles[: t + 1]          # je Ticker eigener Index!
+```
+Bei unterschiedlich langen Historien bedeutet derselbe Index für jeden Titel
+einen anderen Kalendertag. Systematisch betroffen sind jüngere Titel (kürzeste
+Historien). Ein Querschnitts-Rang-IC setzt aber denselben Stichtag voraus.
+
+**NEW** Neues Modul `scoring/validation/panel.py` mit `PanelCalendar`:
+- datumsbasierte Ausrichtung, sobald alle Reihen durchgehend `ts` haben
+- sonst Rückfall auf Ausrichtung vom **Reihenende** (korrekt, solange alle
+  Reihen am selben Tag enden — und in jedem Fall besser als am Reihenanfang);
+  der Rückfall wird ausgewiesen, nicht stillschweigend vollzogen
+- nie eine Kerze nach dem Stichtag (durch Test abgesichert)
+- Vorwärtsrenditen laufen ebenfalls über die gemeinsame Achse
+
+Genutzt von `calibrate_signals.py` und `validate_signal_strength.py` — eine
+Implementierung statt zwei.
+
+### L3/L4 — Echter Peer-Kontext in den Mess-Skripten
+
+**OLD**
+```python
+sector = SECTORS[i % 8]      # Round-Robin = Zufallszuordnung
+market_cap = 1e9             # für ALLE identisch
+fundamentals = {}
+```
+(`calibrate_signals --from-cache` setzte sogar `sector=None, industry=None`,
+womit **alle** Peer-Perzentile auf `universe` zurückfielen.)
+
+**NEW** `--meta-from <snapshot-cache>` in `audit_scores.py`,
+`validate_signal_strength.py` und `calibrate_signals.py`. Ohne die Angabe wird
+jetzt ausdrücklich gewarnt, statt stillschweigend etwas anderes zu messen.
+Die Messbedingungen (`alignment`, `scoring_window_bars`, `peer_context`)
+stehen im Ergebnis-JSON.
+
+**BACKTEST / MESSERGEBNIS** — derselbe Datensatz (318 Titel), nur der
+Peer-Kontext unterscheidet sich:
+
+| | Platzhalter (bisher) | echter Kontext |
+|---|---|---|
+| effektiv unabhängige Signale | 4,93 | **5,51** |
+| Redundanz-Cluster | `market_leadership + momentum + rel_strength + trend` | `momentum + rel_strength + trend` |
+
+`market_leadership` verlässt das Trend-Cluster vollständig und erscheint nicht
+mehr unter den acht stärksten Paaren. Die im Code dokumentierte Korrelation von
+**0,92 zu `rel_strength` war überwiegend ein Artefakt der Messbedingungen**:
+Ohne `roic`/`net_margin` und mit konstanter Marktkapitalisierung *musste* sich
+der Faktor auf `ret_3m` reduzieren — die Hauptkomponente von `rel_strength`.
+
+**Offene Folge (P2, hier bewusst nicht geändert):** Die `FACTOR_GROUPS` in
+`screener/explain.py`, die die dem Nutzer angezeigte *Signalstärke* bestimmen,
+ordnen `market_leadership` auf Basis eben dieser verzerrten Messung der Gruppe
+„Trendstärke" zu. Das gehört in die Ebenen-Neuordnung, nicht in einen
+Messfix.
+
+### L5 — Einheitliches Eingangsfenster Live == Backtest
+
+**OLD** Produktion ~260 Bars (`YF_PERIOD=1y` + `YF_KEEP_CANDLES=260`),
+`audit_scores` 400, `validate_signal_strength` 400, `calibrate_signals`
+**unbegrenzt** (`candles[:t+1]`, bis ~3.000 Bars).
+
+**NEW** Alle drei nutzen `SCORING_WINDOW = YF_KEEP_CANDLES` (Standard 260),
+in `calibrate_signals` per `--window` überschreibbar.
+
+**WHY** Gleiche Funktionen auf anderen Eingangsdaten sind nicht dasselbe
+System. Betroffen sind alle fensterabhängigen Kennzahlen: EMA200-Einschwingen
+(die EMA-Reihe wird vom ersten Wert aus initialisiert), `ret_1y`, sowie
+Fibonacci- und Volumenprofil-Spannweiten in der Zonen-Engine.
+
+### Tests
+
+| | vorher | nachher |
+|---|---|---|
+| Testanzahl | 178 | **196** |
+| Status | grün | grün |
+
+Neu: `tests/test_candle_ts.py` (8, inkl. Cache-Verträglichkeit),
+`tests/test_panel_calendar.py` (10).
+
+### Was P1 NICHT löst
+
+- **Survivorship Bias** (L7) bleibt bestehen: Die Kerzen-Caches enthalten nur
+  heute noch gelistete Titel. Das ist eine Eigenschaft der Datenquelle.
+- **Point-in-Time-Fundamentaldaten** fehlen weiterhin; `fund_quality`, `growth`
+  und `valuation` bleiben historisch nicht validierbar.
+- **`auto_adjust=True`** (L6) — rückwirkend adjustierte Kurse, geringe Schwere.
+- **`data_quality._classify_move`** (L8) nutzt Folgebars; live unkritisch, aber
+  eine Falle, sobald Datenqualität in einen Point-in-Time-Backtest einbezogen wird.
+- Die vorhandenen Kerzen-Caches haben **kein** Datum; sie laufen bis zu einem
+  Neuabruf im dokumentierten Rückfallmodus (Ausrichtung vom Reihenende).

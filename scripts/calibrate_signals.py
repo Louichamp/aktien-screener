@@ -34,13 +34,14 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scoring import InstrumentData, ScoreEngine, ScoringContext
 from scoring.composites import DEFAULT_COMPOSITES
-from scoring.validation import classify_regime, redundancy_report
+from scoring.validation import build_panel_calendar, classify_regime, redundancy_report
 from scoring.validation.ic import ic_summary, rank_ic, regularized_weights, signal_half_life
 from infrastructure.providers.indicators import technicals_from_candles
 
@@ -48,28 +49,40 @@ from infrastructure.providers.indicators import technicals_from_candles
 TECHNICAL_SLUGS = ["trend", "rel_strength", "market_leadership", "momentum",
                    "volume", "institutional_demand", "breakout", "setup"]
 
-
-def _forward_return(candles, t: int, h: int) -> float | None:
-    if t + h >= len(candles):
-        return None
-    p0, p1 = candles[t].c, candles[t + h].c
-    if p0 and p0 > 0 and p1 and p1 > 0:
-        return p1 / p0 - 1.0
-    return None
+# Eingangsfenster der Indikatorberechnung — MUSS der Produktion entsprechen.
+# Produktion: YF_PERIOD=1y + YF_KEEP_CANDLES=260 (siehe compute-scores.yml und
+# YahooMarketDataProvider). Vorher lief die Kalibrierung auf `candles[:t+1]`,
+# also auf einem mit jedem Termin wachsenden Fenster von bis zu ~3000 Bars —
+# gleiche Funktionen, andere Eingangsdaten. Betroffen sind alle Kennzahlen,
+# deren Wert vom Fenster abhängt (EMA200-Einschwingen, ret_1y, Fibonacci-/
+# Volumenprofil-Spannweiten).
+SCORING_WINDOW = int(os.getenv("YF_KEEP_CANDLES", "260"))
 
 
 def run_ic_backtest(candle_data: dict[str, dict],
                     *, horizons: list[int], step: int = 21,
-                    min_history: int = 252) -> dict:
+                    min_history: int = 252,
+                    window: int | None = None) -> dict:
     """Point-in-Time-IC-Backtest auf vorab geholten Kerzen (rein, netzwerkfrei).
 
     `candle_data`: {ticker: {"candles": [Candle...], "sector": str, "industry": str}}.
     Gibt das vollständige Kalibrierungs-Resultat als serialisierbares Dict zurück.
+
+    Die Stichtage liegen auf einer GEMEINSAMEN Handelstagsachse (siehe
+    `scoring.validation.panel`): Der Querschnitt vergleicht damit tatsächlich
+    denselben Kalendertag. Vorher wurde über den Listenindex ausgerichtet, was
+    bei unterschiedlich langen Historien verschiedene Zeitpunkte vermischte.
     """
     engine = ScoreEngine()
     max_h = max(horizons)
-    # Globale Zeitachse über das längste verfügbare Sample.
-    max_len = max((len(d["candles"]) for d in candle_data.values()), default=0)
+    window = window or SCORING_WINDOW
+
+    series = {tk: d["candles"] for tk, d in candle_data.items()}
+    cal = build_panel_calendar(series)
+    if not cal.dated:
+        print("  WARNUNG: Kerzen ohne Datum — Ausrichtung vom Reihenende. "
+              "Korrekt nur, solange alle Reihen am selben Tag enden.",
+              file=sys.stderr)
 
     # ic_series[slug][h] -> Liste von Termin-ICs; regimes -> Liste von Labels (je Termin).
     ic_series: dict[str, dict[int, list[float | None]]] = {
@@ -78,18 +91,32 @@ def run_ic_backtest(candle_data: dict[str, dict],
     last_panel_scores: list[dict[str, float]] = []
     n_dates = 0
 
-    for t in range(min_history, max_len - max_h, step):
-        # Querschnitts-Panel an Termin t aufbauen (nur Daten ≤ t).
+    for j in cal.positions(min_history=min_history, horizon=max_h, step=step):
+        # Querschnitts-Panel am Stichtag j aufbauen (nur Daten ≤ Stichtag).
         insts: list[InstrumentData] = []
         meta: list[tuple[str, dict, dict[int, float]]] = []   # (id, regime_row, fwd_by_h)
         for tk, d in candle_data.items():
             candles = d["candles"]
-            if t >= len(candles):
+            idx = cal.index_at(tk, j)
+            if idx is None or idx < min_history:
                 continue
-            fwd = {h: _forward_return(candles, t, h) for h in horizons}
+            price = candles[idx].c
+            if not price or price <= 0:
+                continue
+
+            # Vorwärtsrendite ebenfalls über die gemeinsame Achse: h Stichtage
+            # weiter, nicht h Positionen in der eigenen (evtl. lückenhaften) Reihe.
+            fwd: dict[int, float | None] = {}
+            for h in horizons:
+                f_idx = cal.index_at(tk, j + h) if (j + h) < cal.n else None
+                fwd[h] = ((candles[f_idx].c / price - 1.0)
+                          if (f_idx is not None and f_idx > idx
+                              and candles[f_idx].c > 0) else None)
             if all(v is None for v in fwd.values()):
                 continue
-            tech = technicals_from_candles(candles[: t + 1], price=candles[t].c)
+
+            hist = candles[max(0, idx - window + 1): idx + 1]
+            tech = technicals_from_candles(hist, price=price)
             inst = InstrumentData(
                 instrument_id=tk, ticker=tk, asset_class="Aktie",
                 sector=d.get("sector"), industry=d.get("industry"),
@@ -98,7 +125,7 @@ def run_ic_backtest(candle_data: dict[str, dict],
             regime_row = {
                 "realized_vol": tech.get("realized_vol"),
                 "efficiency_ratio": tech.get("efficiency_ratio"),
-                "above_ema200": 1.0 if (tech.get("ema_200") and candles[t].c > tech["ema_200"]) else 0.0,
+                "above_ema200": 1.0 if (tech.get("ema_200") and price > tech["ema_200"]) else 0.0,
                 "ret_1m": tech.get("ret_1m"),
             }
             meta.append((tk, regime_row, fwd))
@@ -167,9 +194,21 @@ def run_ic_backtest(candle_data: dict[str, dict],
     redundancy = (redundancy_report(last_panel_scores, TECHNICAL_SLUGS)
                   if last_panel_scores else {})
 
+    n_with_peers = sum(1 for d in candle_data.values()
+                       if d.get("sector") or d.get("industry"))
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "method": "point_in_time_cross_sectional_rank_ic",
+        # Messbedingungen mitschreiben: ohne sie ist ein IC-Wert nicht einordenbar.
+        "alignment": "trading_date" if cal.dated else "series_end_fallback",
+        "scoring_window_bars": window,
+        "peer_context": {
+            "tickers_with_sector_or_industry": n_with_peers,
+            "tickers_total": len(candle_data),
+            "note": ("Ohne Branchen-/Sektorangabe fallen ALLE Peer-Perzentile auf "
+                     "'universe' zurueck; rel_strength, market_leadership und "
+                     "valuation messen dann etwas anderes als in Produktion."),
+        },
         "primary_horizon": primary_h,
         "n_rebalance_dates": n_dates,
         "n_tickers": len(candle_data),
@@ -182,6 +221,36 @@ def run_ic_backtest(candle_data: dict[str, dict],
         },
         "redundancy": redundancy,
     }
+
+
+_EMPTY_META: dict[str, Any] = {"sector": None, "industry": None, "market_cap": None}
+
+
+def _load_peer_meta(path: str | None) -> dict[str, dict]:
+    """Branche/Sektor/Marktkapitalisierung je Ticker aus einem Snapshot-Cache.
+
+    Ohne diese Angaben fallen SAEMTLICHE Peer-Perzentile auf `universe` zurueck
+    (siehe ScoringContext.peers). `market_leadership` verliert dann drei seiner
+    vier Faktoren und reduziert sich auf ret_3m — also auf die Hauptkomponente
+    von `rel_strength`. Eine so gemessene Korrelation zwischen beiden ist ein
+    Artefakt der Messbedingungen, keine Eigenschaft des Systems.
+    """
+    if not path:
+        return {}
+    import pickle
+    try:
+        with open(path, "rb") as fh:
+            snaps = pickle.load(fh)
+    except (OSError, ValueError, pickle.UnpicklingError) as exc:
+        print(f"  Peer-Kontext nicht lesbar ({exc}) — ohne Branchenangaben.",
+              file=sys.stderr)
+        return {}
+    out: dict[str, dict] = {}
+    for tk, s in snaps.items():
+        out[tk] = {"sector": getattr(s, "sector", None),
+                   "industry": getattr(s, "industry", None),
+                   "market_cap": getattr(s, "market_cap", None)}
+    return out
 
 
 async def _fetch_candles(tickers: list[str], *, period: str, concurrency: int) -> dict[str, dict]:
@@ -213,6 +282,12 @@ async def main() -> None:
                     help="Pickle mit {ticker: [Candle]} statt Yahoo-Abruf "
                          "(z.B. .cache/backtest_candles_12y.pkl) — netzfrei "
                          "und reproduzierbar")
+    ap.add_argument("--meta-from", default=None,
+                    help="Snapshot-Cache (z.B. .cache/full_snaps.pkl) fuer "
+                         "echte Branche/Sektor/Marktkapitalisierung. OHNE das "
+                         "fallen alle Peer-Perzentile auf 'universe' zurueck.")
+    ap.add_argument("--window", type=int, default=None,
+                    help=f"Eingangsfenster in Bars (Standard {SCORING_WINDOW} = Produktion)")
     ap.add_argument("--out", default=str(ROOT / "data" / "signal_ic.json"))
     args = ap.parse_args()
 
@@ -224,11 +299,18 @@ async def main() -> None:
         import pickle
         with open(args.from_cache, "rb") as fh:
             store = pickle.load(fh)
-        candle_data = {tk: {"candles": c, "sector": None, "industry": None,
-                            "market_cap": None}
+        meta = _load_peer_meta(args.meta_from)
+        candle_data = {tk: {"candles": c, **meta.get(tk, _EMPTY_META)}
                        for tk, c in list(store.items())[: args.sample]
                        if len(c) >= 300}
-        print(f"  {len(candle_data)} Titel aus {args.from_cache}", file=sys.stderr)
+        have = sum(1 for d in candle_data.values() if d.get("industry") or d.get("sector"))
+        print(f"  {len(candle_data)} Titel aus {args.from_cache}, "
+              f"{have} davon mit echtem Branchen-/Sektor-Kontext", file=sys.stderr)
+        if not have:
+            print("  WARNUNG: ohne Peer-Kontext fallen alle Peer-Perzentile auf "
+                  "'universe' zurueck — rel_strength/market_leadership/valuation "
+                  "messen dann NICHT das Produktionsverhalten. Mit --meta-from "
+                  "einen Snapshot-Cache angeben.", file=sys.stderr)
     else:
         from infrastructure.providers import build_universe
         universe = await build_universe(args.sample, source="broad")
@@ -242,7 +324,8 @@ async def main() -> None:
         print("FEHLER: zu wenig Historie für belastbare IC-Schätzung.", file=sys.stderr)
         raise SystemExit(1)
 
-    result = run_ic_backtest(candle_data, horizons=horizons, step=args.step)
+    result = run_ic_backtest(candle_data, horizons=horizons, step=args.step,
+                             window=args.window)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

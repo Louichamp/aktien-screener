@@ -20,6 +20,7 @@ die hier nicht vorliegen — das wird ausgewiesen, nicht überspielt.
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 import statistics
 import sys
@@ -33,24 +34,55 @@ from scoring import InstrumentData, ScoreEngine, ScoringContext
 from scoring.validation.orthogonality import (_rank_corr, correlation_matrix,
                                               redundancy_report)
 
-SECTORS = ["Technology", "Healthcare", "Financials", "Energy", "Consumer",
-           "Industrials", "Utilities", "Materials"]
+# Eingangsfenster wie in Produktion (YF_KEEP_CANDLES); vorher fest 400 Bars.
+SCORING_WINDOW = int(os.getenv("YF_KEEP_CANDLES", "260"))
 
 
-def build_panel(store: dict, limit: int):
+def _load_peer_meta(path: str | None) -> dict[str, dict]:
+    """Echte Branche/Sektor/Marktkapitalisierung je Ticker.
+
+    Frueher standen hier Platzhalter: Sektor per Round-Robin (`SECTORS[i % 8]`),
+    market_cap konstant 1e9, keine Fundamentaldaten. Unter diesen Bedingungen
+    verliert `market_leadership` drei seiner vier Faktoren (roic, net_margin
+    fehlen; market_cap ist fuer alle gleich -> Perzentil 0,5) und reduziert sich
+    zwangslaeufig auf ret_3m — die Hauptkomponente von `rel_strength`. Die so
+    gemessene Korrelation von 0,92 zwischen beiden war damit ueberwiegend ein
+    Artefakt der Messbedingungen und nicht die Eigenschaft, die sie zu zeigen
+    schien.
+    """
+    if not path:
+        return {}
+    try:
+        with open(path, "rb") as fh:
+            snaps = pickle.load(fh)
+    except (OSError, ValueError, pickle.UnpicklingError) as exc:
+        print(f"Peer-Kontext nicht lesbar ({exc}) — ohne Branchenangaben.")
+        return {}
+    return {tk: {"sector": getattr(s, "sector", None),
+                 "industry": getattr(s, "industry", None),
+                 "market_cap": getattr(s, "market_cap", None),
+                 "fundamentals": dict(getattr(s, "fundamentals", None) or {})}
+            for tk, s in snaps.items()}
+
+
+def build_panel(store: dict, limit: int, meta_path: str | None = None):
     """Querschnitt zu EINEM Zeitpunkt (letzter Bar) — so wie die Engine live läuft."""
+    meta = _load_peer_meta(meta_path)
     insts = []
-    for i, (tk, candles) in enumerate(list(store.items())[:limit]):
+    for tk, candles in list(store.items())[:limit]:
         if len(candles) < 260:
             continue
-        c = candles[-400:]
+        c = candles[-SCORING_WINDOW:]
         price = c[-1].c
         if price <= 0:
             continue
+        pm = meta.get(tk, {})
         insts.append(InstrumentData(
             instrument_id=tk, ticker=tk, asset_class="Aktie",
-            sector=SECTORS[i % len(SECTORS)], industry=None, market_cap=1e9,
-            technicals=technicals_from_candles(c, price=price), fundamentals={}))
+            sector=pm.get("sector"), industry=pm.get("industry"),
+            market_cap=pm.get("market_cap"),
+            technicals=technicals_from_candles(c, price=price),
+            fundamentals=pm.get("fundamentals", {})))
     engine = ScoreEngine()
     ctx = ScoringContext(insts, min_peers=engine.min_peers)
     scored = {i.instrument_id: engine.score_instrument(i, ctx) for i in insts}
@@ -61,11 +93,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=str(ROOT / ".cache" / "backtest_candles_12y.pkl"))
     ap.add_argument("--limit", type=int, default=400)
+    ap.add_argument("--meta-from", default=None,
+                    help="Snapshot-Cache (z.B. .cache/full_snaps.pkl) fuer echte "
+                         "Branche/Sektor/Marktkapitalisierung/Fundamentaldaten")
     args = ap.parse_args()
 
     with open(args.cache, "rb") as fh:
         store = pickle.load(fh)
-    engine, insts, scored = build_panel(store, args.limit)
+    engine, insts, scored = build_panel(store, args.limit, args.meta_from)
     print(f"Querschnitt: {len(insts)} Titel aus {Path(args.cache).name}\n")
 
     weights = engine.composites["technical_rating"]
