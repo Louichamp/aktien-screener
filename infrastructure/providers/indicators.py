@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 
-from screener.zones import Candle
+from screener.zones import Candle, swing_points
 
 
 # ── Basishelfer ───────────────────────────────────────────────────────────────
@@ -231,20 +231,81 @@ def obv_series(candles: list[Candle]) -> list[float]:
     return out
 
 
-def structure_counts(candles: list[Candle], lookback: int = 20) -> dict[str, int]:
-    """Zählt HH, HL, LH, LL in den letzten `lookback` Kerzen."""
+def median_dollar_volume(candles: list[Candle], period: int = 60) -> float | None:
+    """Median-Tagesumsatz (Kurs x Volumen) der letzten `period` Bars.
+
+    Warum Median und nicht Durchschnitt: Der Tagesumsatz ist extrem
+    rechtsschief. Ein einzelner Nachrichtentag mit dem Zwanzigfachen des
+    Normalumsatzes hebt den arithmetischen Schnitt eines sonst illiquiden
+    Titels ueber jede Schwelle — genau die Titel also, die der
+    Liquiditaetsfilter aussortieren soll.
+
+    Diese Definition entspricht exakt der in `screener/breakout_signal.py`
+    bereits gemessenen und verwendeten; vorher existierten zwei
+    unterschiedliche Liquiditaetsbegriffe im selben System.
+    """
+    if not candles:
+        return None
+    seg = candles[-period:] if len(candles) >= period else candles
+    vals = [c.c * c.v for c in seg if c.c and c.v]
+    if not vals:
+        return None
+    vals.sort()
+    m = len(vals) // 2
+    return vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2.0
+
+
+def _collapse_plateaus(prices: list[float]) -> list[float]:
+    """Fasst unmittelbar aufeinanderfolgende GLEICHE Swing-Preise zusammen.
+
+    `swing_points` vergleicht mit `>=` bzw. `<=`. In einer Reihe mit wiederholt
+    identischen Hochs (Plateau — bei illiquiden Titeln haeufig, siehe die
+    „Tage ohne Kursaenderung"-Pruefung in screener/data_quality.py) erfuellt
+    dadurch JEDE Kerze die Fraktal-Bedingung. Ohne diese Zusammenfassung
+    erzeugt eine voellig flache Reihe dutzende Pseudo-Swings; werden gleiche
+    Werte dann als „tieferes Hoch" gezaehlt, sieht Seitwaerts baerisch aus.
+
+    Ein gleich hohes Hoch ist weder ein hoeheres noch ein tieferes Hoch.
+    """
+    out: list[float] = []
+    for p in prices:
+        if not out or p != out[-1]:
+            out.append(p)
+    return out
+
+
+def structure_counts(candles: list[Candle], lookback: int = 60,
+                     window: int = 2) -> dict[str, int]:
+    """Zählt HH, HL, LH, LL aus SWING-Punkten (Chartstruktur).
+
+    Die frühere Fassung verglich benachbarte KERZEN (`cur.h > prev.h`). Das ist
+    keine Chartstruktur: Es galt hh + lh == n-1 per Konstruktion, der daraus in
+    `setup` gebildete „bullische Strukturanteil" war damit schlicht ein Zähler
+    für Aufwärtstage — also ein weiterer kurzfristiger Momentum-Proxy neben RSI,
+    MACD und Stochastik im selben Score.
+
+    Höheres Hoch/höheres Tief ist ein Verhältnis aufeinanderfolgender
+    SWING-Punkte. Genutzt wird dafür dieselbe Fraktal-Definition wie in der
+    Zonen-Engine (`screener.zones.swing_points`), damit es im System nur EINEN
+    Swing-Begriff gibt.
+
+    Kausal unbedenklich: `swing_points` bestätigt einen Swing erst `window` Bars
+    später und läuft nur bis `n - window` — die jüngsten Bars gelten bewusst
+    noch nicht als Swing. Es wird also nie in die Zukunft geschaut.
+
+    `lookback` ist von 20 auf 60 Bars angehoben, weil in 20 Bars oft nur zwei
+    bis drei Swings liegen und ein Verhältnis daraus reines Rauschen wäre.
+    """
     seg = candles[-lookback:] if len(candles) >= lookback else candles
-    hh = hl = lh = ll = 0
-    for i in range(1, len(seg)):
-        prev, cur = seg[i - 1], seg[i]
-        if cur.h > prev.h:
-            hh += 1
-        else:
-            lh += 1
-        if cur.l > prev.l:
-            hl += 1
-        else:
-            ll += 1
+    if len(seg) < 2 * window + 2:
+        return {"hh": 0, "hl": 0, "lh": 0, "ll": 0}
+    highs, lows = swing_points(seg, window=window)
+    highs, lows = _collapse_plateaus(highs), _collapse_plateaus(lows)
+
+    hh = sum(1 for a, b in zip(highs, highs[1:]) if b > a)
+    lh = sum(1 for a, b in zip(highs, highs[1:]) if b < a)
+    hl = sum(1 for a, b in zip(lows, lows[1:]) if b > a)
+    ll = sum(1 for a, b in zip(lows, lows[1:]) if b < a)
     return {"hh": hh, "hl": hl, "lh": lh, "ll": ll}
 
 
@@ -462,7 +523,7 @@ def technicals_from_candles(candles: list[Candle], *, price: float) -> dict[str,
         t["roc"] = t["ret_1m"]          # Rückwärtskompatibles Alias
 
     # ── Chartstruktur (HH / HL / LH / LL der letzten 20 Kerzen) ─────────
-    struct = structure_counts(candles, 20)
+    struct = structure_counts(candles)          # Swing-basiert, 60-Bar-Fenster
     t["hh_count"] = float(struct["hh"])
     t["hl_count"] = float(struct["hl"])
     t["lh_count"] = float(struct["lh"])

@@ -28,7 +28,7 @@ import httpx
 from screener.zones import Candle
 from screener.pipeline import MarketSnapshot
 
-from .indicators import technicals_from_candles
+from .indicators import median_dollar_volume, technicals_from_candles
 
 log = logging.getLogger("screener.provider.fmp")
 
@@ -254,9 +254,12 @@ class FMPMarketDataProvider:
             return None
 
         technicals = technicals_from_candles(candles, price=price)
-        # avg_dollar_volume aus Quote (Fallback: aus Kerzen)
+        # Liquiditaet als MEDIAN-Tagesumsatz aus den Kerzen (robust gegen
+        # einzelne Umsatz-Spitzen); Quote-Durchschnitt nur als Rueckfallebene.
+        # Gleiche Definition wie im Yahoo-Provider und in breakout_signal.py.
         avg_vol = _f(quote, "avgVolume", "avgVolume10Day")
-        adv = (avg_vol * price) if avg_vol else None
+        adv = (median_dollar_volume(candles)
+               or ((avg_vol * price) if avg_vol else None))
 
         # Fundamentaldaten defensiv mappen (FMP-Feldnamen variieren je Endpoint/Version)
         fcf_ps = _f(metrics, "freeCashFlowPerShareTTM", "freeCashFlowPerShare")

@@ -20,7 +20,7 @@ from typing import Any
 from screener.zones import Candle
 from screener.pipeline import MarketSnapshot
 
-from .indicators import technicals_from_candles
+from .indicators import median_dollar_volume, technicals_from_candles
 
 log = logging.getLogger("screener.provider.yahoo")
 
@@ -132,7 +132,12 @@ class YahooMarketDataProvider:
             technicals=technicals,
             fundamentals=self._fundamentals(info) if info else {},
             candles=candles,
-            avg_dollar_volume=(avg_vol * price) if avg_vol else None,
+            # Feldname historisch ("avg"), Berechnung bewusst als MEDIAN:
+            # siehe median_dollar_volume(). Umbenennen wuerde den gepickelten
+            # Snapshot-Cache (MarketSnapshot, __slots__) unlesbar machen und
+            # einen vollstaendigen Neuabruf erzwingen.
+            avg_dollar_volume=(median_dollar_volume(candles)
+                               or ((avg_vol * price) if avg_vol else None)),
         )
 
     async def fetch(self, ticker: str) -> MarketSnapshot | None:
@@ -281,7 +286,9 @@ class YahooMarketDataProvider:
             currency=info.get("currency") or meta.get("currency") or "USD",
             price=price, technicals=technicals, fundamentals=fundamentals,
             candles=kept,
-            avg_dollar_volume=(avg_vol * price) if avg_vol else None)
+            # Median statt Durchschnitt — s. Kommentar im Einzelabruf oben.
+            avg_dollar_volume=(median_dollar_volume(kept)
+                               or ((avg_vol * price) if avg_vol else None)))
 
     # ------------------------------------------------------------------ #
     def _news_sync(self, ticker: str, limit: int) -> list[dict[str, Any]]:
