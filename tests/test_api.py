@@ -500,8 +500,10 @@ async def test_search_and_metadata_filters(app_and_db):
     body = r.json()
     assert body["total"] == 1 and body["items"][0]["ticker"] == "NVDA"
     assert body["items"][0]["name"] == "NVDA Inc."
-    assert body["items"][0]["rating"] in {"STARK KAUFEN", "KAUFEN", "HALTEN",
-                                          "REDUZIEREN", "VERKAUFEN"}
+    # "STARK KAUFEN" wird seit 2026-09-13 nicht mehr vergeben, siehe
+    # infrastructure/database/repository.rating_label und docs/AUDIT_2026-09.md.
+    assert body["items"][0]["rating"] in {"KAUFEN", "HALTEN", "REDUZIEREN",
+                                          "VERKAUFEN", "UNKLAR"}
     # Branchenfilter
     sec = _SECTORS[0]
     b2 = (await client.get("/api/v1/screener", params={"sector": sec, "limit": 100})).json()

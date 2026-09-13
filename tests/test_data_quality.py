@@ -218,11 +218,11 @@ def test_keine_kaufempfehlung_auf_duenner_datenlage():
     assert rating_label(20, 31) == RATING_UNCLEAR
 
 
-def test_bei_belastbarer_datenlage_bleibt_alles_wie_bisher():
+def test_bei_belastbarer_datenlage_wird_bewertet():
     from infrastructure.database.repository import (MIN_QUALITY_FOR_RATING,
                                                     rating_label)
-    assert rating_label(86, MIN_QUALITY_FOR_RATING) == "STARK KAUFEN"
-    assert rating_label(86, 95) == "STARK KAUFEN"
+    assert rating_label(86, MIN_QUALITY_FOR_RATING) == "KAUFEN"
+    assert rating_label(86, 95) == "KAUFEN"
     assert rating_label(70, 90) == "KAUFEN"
     assert rating_label(20, 90) == "VERKAUFEN"
 
@@ -231,5 +231,5 @@ def test_ohne_angabe_zur_datenqualitaet_unveraendertes_verhalten():
     """Rückwärtskompatibel: Wer die Datenqualität nicht kennt, bekommt das
     bisherige Verhalten — sonst würden Altbestände schlagartig UNKLAR."""
     from infrastructure.database.repository import rating_label
-    assert rating_label(86) == "STARK KAUFEN"
+    assert rating_label(86) == "KAUFEN"
     assert rating_label(None) is None

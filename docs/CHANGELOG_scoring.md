@@ -325,3 +325,108 @@ Neu: `tests/test_candle_ts.py` (8, inkl. Cache-Verträglichkeit),
   eine Falle, sobald Datenqualität in einen Point-in-Time-Backtest einbezogen wird.
 - Die vorhandenen Kerzen-Caches haben **kein** Datum; sie laufen bis zu einem
   Neuabruf im dokumentierten Rückfallmodus (Ausrichtung vom Reihenende).
+
+
+---
+
+## 2026-09-13 — Produktentscheidungen nach dem Audit
+
+Zwei Entscheidungen, die sich aus den Messungen ergaben und vom Projekteigner
+getroffen wurden. Beides sind bewusste Änderungen am sichtbaren Verhalten.
+
+### „STARK KAUFEN" entfernt
+
+**OLD**
+```python
+if total_score >= 80:
+    return "STARK KAUFEN" if complete else "KAUFEN"
+if total_score >= 65:
+    return "KAUFEN"
+```
+
+**NEW**
+```python
+if total_score >= 65:
+    return "KAUFEN"
+```
+
+**WHY**
+Der Walk-Forward-Test über 12 Jahre (782 Titel, 124 Stichtage, 55.821
+Beobachtungen) zeigt, dass die Klasse 80+ des technischen Ratings auf allen
+geprüften Horizonten die schlechteste war:
+
+| Klasse | 5d | 20d | 60d | 120d | Trefferquote (60d) |
+|---|---|---|---|---|---|
+| **80–90** | −0,11 % | +0,21 % | **−0,87 %** | **−1,33 %** | **48,8 %** |
+| 40–50 | +0,46 % | +1,14 % | +3,82 % | +6,47 % | 59,8 % |
+
+Der Effekt ist auch branchenbereinigt vorhanden (−0,27 %) und ökonomisch
+plausibel: Ein maximales technisches Rating verlangt gleichzeitig Höchstwerte
+bei Trend, Momentum und relativer Stärke — also genau die überdehnten Titel,
+die kurzfristig zur Mitte zurückkehren.
+
+**EXPECTED BENEFIT**
+Das System spricht keine Höchstempfehlung mehr aus, für die es keine Evidenz
+gibt. „KAUFEN" ist die stärkste Aussage.
+
+**RISK / GRENZE**
+Gemessen wurde das TECHNISCHE Rating (60 % Gewicht des Gesamtratings). Die
+fundamentale Hälfte ist mangels Point-in-Time-Fundamentaldaten historisch
+nicht validierbar; ob sie den Effekt abmildert, ist nicht entscheidbar. Titel
+ab Score 80 erhalten weiterhin „KAUFEN" — die Empfehlung wird also abgeschwächt,
+nicht umgekehrt.
+
+**Übergang:** Das Rating steht als Spalte in der Datenbank und wird beim
+Neuberechnen gesetzt. Bestehende Zeilen tragen „STARK KAUFEN" noch bis zu ihrer
+nächsten Auffrischung (Rotation ~4 Tage). Deshalb bleiben Filter, Sortierung
+und Einfärbung im Frontend für den Wert erhalten; die Übersicht blendet leere
+Segmente ohnehin aus, der Eintrag verschwindet also von selbst.
+
+### CRV wird ehrlich dargestellt
+
+**OLD** Das CRV stand als blanke Zahl neben Einstieg, Stopp und Kurszielen —
+und wurde damit wie eine Erfolgsaussicht gelesen.
+
+**NEW** Unter den handelbaren Leveln steht jetzt, was das CRV ist und was die
+Messung ergeben hat; die Tabellenspalte trägt denselben Hinweis als Tooltip.
+Zentrale Quelle: `frontend/lib/crv.ts`.
+
+**WHY**
+`scripts/backtest_zones.py`, 8.925 simulierte Trades:
+
+| | |
+|---|---|
+| ausgewiesenes CRV (Median) | **1,99** |
+| Ziel zuerst erreicht | **38,8 %** |
+| Stopp zuerst erreicht | **61,2 %** |
+| rechnerischer EV (P·CRV − P·1) | +0,161 R |
+| **tatsächlich gemessener EV** (15 bp Kosten) | **−0,038 R** |
+
+Ein angezeigtes CRV von rund 2 entspricht real einem negativen Erwartungswert.
+Die Kennzahl sagt nichts darüber, wie wahrscheinlich das Ziel erreicht wird.
+
+**Bewusst NICHT umgesetzt:** eine titelbezogene Wahrscheinlichkeit oder ein
+pro Zeile gerechneter Erwartungswert. Die Messung zeigt, dass genau diese
+Rechnung (P·CRV − P·1 = +0,161 R) um 0,2 R danebenliegt, weil der realisierte
+Gewinn je Treffer (+1,59 R) unter dem ausgewiesenen CRV bleibt. Ein solcher
+Wert wäre wieder eine Scheingenauigkeit. Ausgewiesen werden deshalb
+ausschließlich die gemessenen universumsweiten Basisraten — ausdrücklich als
+solche gekennzeichnet.
+
+### Tests
+
+| | vorher | nachher |
+|---|---|---|
+| Testanzahl | 310 | **330** |
+| Status | grün | grün |
+
+Neu: `tests/test_rating_ladder.py` (20) — prüft über den gesamten Wertebereich
+0–100, dass „STARK KAUFEN" nicht mehr entsteht, dass die übrigen Schwellen
+(65/50/35) unverändert gelten, dass die Leiter monoton bleibt und dass
+Datenqualitäts-Sperre und Deckelung einseitiger Scores weiter greifen.
+Zusätzlich abgesichert bis in die Datenbank (`test_pipeline_e2e.py`) und in der
+API-Antwort (`test_api.py`).
+
+**Frontend:** `npm run build` erfolgreich; die Anzeige wurde im laufenden
+System gegen echte Daten geprüft (Tearsheet CLMT, CRV 2,02 mit Hinweistext,
+keine Konsolenfehler).

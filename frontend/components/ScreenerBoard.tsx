@@ -16,6 +16,7 @@ import {
   BatteryBadge, TrendBadge, RiskDots, SignalBadge,
 } from "./Badges";
 import SortHeader from "./SortHeader";
+import { CRV_TOOLTIP } from "@/lib/crv";
 
 interface Col {
   key: string;
@@ -79,7 +80,7 @@ const COLS: Col[] = [
     render: (r) => <span className="font-mono tabular-nums text-bull">{fmtPrice(r.targets.target_1, r.currency)}</span> },
   { key: "target_2", label: "Kursziel 2", align: "right", defaultOn: false,
     render: (r) => <span className="font-mono tabular-nums text-bull">{fmtPrice(r.targets.target_2, r.currency)}</span> },
-  { key: "crv", label: "CRV", title: "Chance-Risiko-Verhältnis", align: "right", defaultOn: false,
+  { key: "crv", label: "CRV", title: CRV_TOOLTIP, align: "right", defaultOn: false,
     render: (r) => <span className="font-mono tabular-nums">{fmtNum(r.targets.crv)}</span> },
   { key: "forecast_return", label: "Prognose", title: "Erwartete Rendite bis Prognose-Ende", align: "right", defaultOn: false,
     render: (r) => {

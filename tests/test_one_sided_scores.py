@@ -45,16 +45,24 @@ def test_aispw_fall_wird_nicht_mehr_zu_stark_kaufen():
     assert total == 100, "Der Score selbst bleibt unverändert — er ist ehrlich"
     assert q.score < MIN_QUALITY_FOR_RATING, f"Datenqualität {q.score} zu hoch"
     assert rating_label(total, q.score, complete=False) == RATING_UNCLEAR
-    # Vorher:
-    assert rating_label(total) == "STARK KAUFEN"
+    # Ohne die Datenqualitaets-Sperre stuende hier weiterhin eine
+    # Kaufempfehlung (seit 2026-09-13 hoechstens noch "KAUFEN", s.
+    # rating_label) — die Sperre ist also weiterhin das, was greift.
+    assert rating_label(total) == "KAUFEN"
 
 
 def test_nur_technisch_mit_guter_datenlage_wird_gedeckelt():
     """Der Fall, den die Datenqualität NICHT abfängt: volle Kurshistorie, aber
     keine Fundamentaldaten. Datenqualität ~87, also über der Sperre — trotzdem
-    beruht das Rating nur auf der halben Beweislage."""
-    assert rating_label(86, 87, complete=True) == "STARK KAUFEN"
+    beruht das Rating nur auf der halben Beweislage.
+
+    Nach oben ist die Deckelung gegenstandslos geworden: Seit dem Wegfall von
+    „STARK KAUFEN" ist „KAUFEN" ohnehin die hoechste Stufe. Die Deckelung
+    wirkt weiterhin nach UNTEN (VERKAUFEN -> REDUZIEREN)."""
+    assert rating_label(86, 87, complete=True) == "KAUFEN"
     assert rating_label(86, 87, complete=False) == "KAUFEN"
+    assert rating_label(20, 87, complete=True) == "VERKAUFEN"
+    assert rating_label(20, 87, complete=False) == "REDUZIEREN"
 
 
 def test_deckelung_wirkt_in_beide_richtungen():
@@ -68,14 +76,16 @@ def test_deckelung_wirkt_in_beide_richtungen():
 #  Die vier Fälle müssen unterscheidbar bleiben
 # --------------------------------------------------------------------------- #
 def test_die_vier_faelle_sind_unterscheidbar():
-    hoch = 86
-    beide = rating_label(hoch, 90, complete=True)
-    einseitig = rating_label(hoch, 90, complete=False)
-    duenn = rating_label(hoch, 30, complete=False)
+    """Am unteren Ende, wo die Deckelung nach dem Wegfall von „STARK KAUFEN"
+    noch greift, muessen alle vier Faelle weiterhin unterscheidbar bleiben."""
+    niedrig = 20
+    beide = rating_label(niedrig, 90, complete=True)
+    einseitig = rating_label(niedrig, 90, complete=False)
+    duenn = rating_label(niedrig, 30, complete=False)
     ohne = rating_label(None, 90)
 
-    assert beide == "STARK KAUFEN"
-    assert einseitig == "KAUFEN"
+    assert beide == "VERKAUFEN"
+    assert einseitig == "REDUZIEREN"
     assert duenn == RATING_UNCLEAR
     assert ohne is None
     assert len({beide, einseitig, duenn, str(ohne)}) == 4
@@ -106,5 +116,5 @@ def test_score_wird_nicht_manipuliert():
 def test_vollstaendigkeit_ist_standard():
     """Ohne Angabe verhält sich rating_label wie bisher — sonst würden
     Altbestände ohne die neuen Felder schlagartig abgewertet."""
-    assert rating_label(86) == "STARK KAUFEN"
+    assert rating_label(86) == "KAUFEN"
     assert rating_label(20) == "VERKAUFEN"

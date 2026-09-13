@@ -124,6 +124,10 @@ def _conditions(f: ScreenerFilters) -> list:
         c.append(M.data_quality >= f.min_data_quality)
     if f.rare_only:
         c.append(M.chance_rarity.in_(["selten", "sehr selten"]))
+        # "STARK KAUFEN" wird seit 2026-09-13 nicht mehr VERGEBEN (s.
+        # repository.rating_label), steht aber noch in Zeilen, die seither
+        # nicht neu berechnet wurden. Es bleibt hier stehen, damit der Filter
+        # waehrend der Rotation (~4 Tage) keine Altzeilen verschluckt.
         c.append(M.rating.in_(["KAUFEN", "STARK KAUFEN"]))
     return c
 
