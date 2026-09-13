@@ -75,8 +75,12 @@ def load_candles(tickers: list[str], years: int) -> dict[str, list[Candle]]:
                 continue
             if len(sub) < 400:
                 continue
+            # r.Index ist der Handelstag — ohne ihn koennen Querschnitte im
+            # Backtest nur ueber den Listenindex gebildet werden und
+            # vermischen dadurch Kalendertage (siehe screener.zones.Candle).
             store[t] = [Candle(float(r.Open), float(r.High), float(r.Low),
-                               float(r.Close), float(r.Volume))
+                               float(r.Close), float(r.Volume),
+                               str(getattr(r, "Index", ""))[:10] or None)
                         for r in sub.itertuples()]
         with open(path, "wb") as fh:
             pickle.dump(store, fh)

@@ -20,7 +20,7 @@ from typing import Any
 from screener.zones import Candle
 from screener.pipeline import MarketSnapshot
 
-from .indicators import technicals_from_candles
+from .indicators import median_dollar_volume, technicals_from_candles
 
 log = logging.getLogger("screener.provider.yahoo")
 
@@ -35,6 +35,23 @@ def _f(v: Any) -> float | None:
         f = float(v)
         return f if math.isfinite(f) else None  # NaN und Infinity raus
     except (TypeError, ValueError):
+        return None
+
+
+def _iso_day(index_value: Any) -> str | None:
+    """Handelstag eines DataFrame-Index-Eintrags als `YYYY-MM-DD`.
+
+    Robust gegen Timestamp, datetime und String; bei Unlesbarem `None`, damit
+    ein kaputtes Datum nie den Ingest eines Titels verhindert.
+    """
+    if index_value is None:
+        return None
+    try:
+        iso = getattr(index_value, "date", None)
+        if callable(iso):
+            return index_value.date().isoformat()
+        return str(index_value)[:10] or None
+    except Exception:
         return None
 
 
@@ -58,12 +75,15 @@ class YahooMarketDataProvider:
     # ------------------------------------------------------------------ #
     def _candles_from_history(self, hist: Any) -> list[Candle]:
         candles: list[Candle] = []
-        for row in hist.itertuples(index=False):
+        # index=True: der DatetimeIndex ist der Handelstag. Er wurde frueher
+        # verworfen — ohne ihn kann der Backtest Querschnitte nur ueber den
+        # Listenindex bilden und vermischt dadurch Kalendertage (s. Candle).
+        for row in hist.itertuples(index=True):
             o, h, l, c = _f(row.Open), _f(row.High), _f(row.Low), _f(row.Close)
             v = _f(getattr(row, "Volume", 0.0)) or 0.0
             if None in (o, h, l, c):
                 continue
-            candles.append(Candle(o=o, h=h, l=l, c=c, v=v))
+            candles.append(Candle(o=o, h=h, l=l, c=c, v=v, ts=_iso_day(row.Index)))
         return candles
 
     def _fundamentals(self, info: dict[str, Any]) -> dict[str, float]:
@@ -132,7 +152,12 @@ class YahooMarketDataProvider:
             technicals=technicals,
             fundamentals=self._fundamentals(info) if info else {},
             candles=candles,
-            avg_dollar_volume=(avg_vol * price) if avg_vol else None,
+            # Feldname historisch ("avg"), Berechnung bewusst als MEDIAN:
+            # siehe median_dollar_volume(). Umbenennen wuerde den gepickelten
+            # Snapshot-Cache (MarketSnapshot, __slots__) unlesbar machen und
+            # einen vollstaendigen Neuabruf erzwingen.
+            avg_dollar_volume=(median_dollar_volume(candles)
+                               or ((avg_vol * price) if avg_vol else None)),
         )
 
     async def fetch(self, ticker: str) -> MarketSnapshot | None:
@@ -176,13 +201,14 @@ class YahooMarketDataProvider:
             if sub is None or len(sub) < 2:
                 continue
             candles: list[Candle] = []
-            for row in sub.itertuples(index=False):
+            for row in sub.itertuples(index=True):        # Index = Handelstag
                 o, h, l, c, v = (_f(getattr(row, "Open", None)), _f(getattr(row, "High", None)),
                                  _f(getattr(row, "Low", None)), _f(getattr(row, "Close", None)),
                                  _f(getattr(row, "Volume", None)))
                 if None in (o, h, l, c):
                     continue
-                candles.append(Candle(o, h, l, c, v or 0.0))
+                candles.append(Candle(o, h, l, c, v or 0.0,
+                                      _iso_day(getattr(row, "Index", None))))
             if len(candles) >= 2:
                 out[tk] = candles
         return out
@@ -281,7 +307,9 @@ class YahooMarketDataProvider:
             currency=info.get("currency") or meta.get("currency") or "USD",
             price=price, technicals=technicals, fundamentals=fundamentals,
             candles=kept,
-            avg_dollar_volume=(avg_vol * price) if avg_vol else None)
+            # Median statt Durchschnitt — s. Kommentar im Einzelabruf oben.
+            avg_dollar_volume=(median_dollar_volume(kept)
+                               or ((avg_vol * price) if avg_vol else None)))
 
     # ------------------------------------------------------------------ #
     def _news_sync(self, ticker: str, limit: int) -> list[dict[str, Any]]:

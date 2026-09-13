@@ -68,16 +68,36 @@ def rating_label(total_score: int | None,
     ein Titel mit voller Kurshistorie, aber ohne Fundamentaldaten erreicht
     87/100 Datenqualität, weil die fundamentale Komponente dort nur 12 %
     Gewicht hat. Im Volllauf standen so 1247 Kaufempfehlungen auf halber
-    Beweislage. Die STÄRKSTE Aussage in beide Richtungen (STARK KAUFEN,
-    VERKAUFEN) setzt beide Säulen voraus; einseitige Scores werden auf die
-    jeweils nächstschwächere Stufe gedeckelt.
+    Beweislage. Die stärkste Aussage nach unten (VERKAUFEN) setzt deshalb
+    beide Säulen voraus; einseitige Scores werden gedeckelt.
+
+    KEIN „STARK KAUFEN" MEHR — entfernt am 2026-09-13. Der Walk-Forward-Test
+    über 12 Jahre (782 Titel, 124 Stichtage, 55.821 Beobachtungen, siehe
+    docs/AUDIT_2026-09.md) zeigt, dass die Klasse 80+ des technischen Ratings
+    auf ALLEN geprüften Horizonten die schlechteste war:
+
+        Klasse 80-90   5 Tage  -0,11 %   20 Tage  +0,21 %
+                      60 Tage  -0,87 %  120 Tage  -1,33 %   Trefferquote 48,8 %
+
+    Zum Vergleich lag die Klasse 40-50 bei +3,82 % (60 Tage) und +6,47 %
+    (120 Tage). Der Effekt ist auch branchenbereinigt vorhanden (-0,27 %) und
+    ökonomisch plausibel: Ein maximales technisches Rating verlangt gleichzeitig
+    Höchstwerte bei Trend, Momentum und relativer Stärke — also genau die
+    überdehnten Titel, die kurzfristig zur Mitte zurückkehren.
+
+    Eine Höchststufe, die historisch am schlechtesten abschnitt, ist als
+    Handlungsempfehlung nicht zu verantworten. Scores ab 80 erhalten deshalb
+    „KAUFEN"; eine darüber hinausgehende Aussage macht das System nicht mehr.
+
+    GRENZE DIESES BEFUNDS: Gemessen wurde das TECHNISCHE Rating (WLATAR), das
+    60 % des Gesamtratings trägt. Die fundamentale Hälfte ist mangels
+    Point-in-Time-Fundamentaldaten historisch nicht validierbar; ob sie den
+    Effekt abmildert, ist mit den vorhandenen Daten nicht entscheidbar.
     """
     if total_score is None:
         return None
     if data_quality is not None and data_quality < MIN_QUALITY_FOR_RATING:
         return RATING_UNCLEAR
-    if total_score >= 80:
-        return "STARK KAUFEN" if complete else "KAUFEN"
     if total_score >= 65:
         return "KAUFEN"
     if total_score >= 50:

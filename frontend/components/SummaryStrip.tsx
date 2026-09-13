@@ -2,6 +2,12 @@ import type { Summary } from "@/lib/types";
 import { totalColor } from "@/lib/format";
 
 // Marktbreite der gefilterten Menge: gestapelter Balken nach Rating + Schnitt.
+// "STARK KAUFEN" wird seit dem 13.09.2026 nicht mehr vergeben (die Klasse
+// schnitt im Walk-Forward-Test historisch am schlechtesten ab, siehe
+// docs/AUDIT_2026-09.md). Der Eintrag bleibt nur stehen, damit Zeilen, die
+// seither noch nicht neu berechnet wurden, korrekt dargestellt werden — leere
+// Segmente werden unten ohnehin herausgefiltert, er verschwindet also von
+// selbst, sobald die Rotation durch ist.
 const ORDER: { key: string; label: string; bar: string; text: string }[] = [
   { key: "STARK KAUFEN", label: "Stark Kaufen", bar: "bg-emerald-400", text: "text-emerald-300" },
   { key: "KAUFEN", label: "Kaufen", bar: "bg-bull", text: "text-bull" },

@@ -1,5 +1,6 @@
 import type { ScreenerRowDetail } from "@/lib/types";
 import { fmtNum, fmtPrice, trendArrow, trendClass, riskColor } from "@/lib/format";
+import { CRV_BASE_RATES } from "@/lib/crv";
 import { RatingBadge } from "../Badges";
 
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
@@ -35,13 +36,44 @@ export default function TechnicalDashboard({ row }: { row: ScreenerRowDetail }) 
         </Stat>
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-4 rounded border border-edge bg-panel2/50 p-3 sm:grid-cols-6">
-        <Stat label="Signal aggr.">{fmtNum(t.signal_aggr)}</Stat>
-        <Stat label="Signal kons.">{fmtNum(t.signal_kons)}</Stat>
-        <Stat label="Stop-Loss"><span className="text-bear">{fmtNum(t.stop_loss)}</span></Stat>
-        <Stat label="Kursziel 1"><span className="text-bull">{fmtNum(t.target_1)}</span></Stat>
-        <Stat label="Kursziel 2"><span className="text-bull">{fmtNum(t.target_2)}</span></Stat>
-        <Stat label="CRV"><span className="text-accent">{fmtNum(t.crv)}</span></Stat>
+      <div className="mt-4 rounded border border-edge bg-panel2/50 p-3">
+        <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">
+          <Stat label="Signal aggr.">{fmtNum(t.signal_aggr)}</Stat>
+          <Stat label="Signal kons.">{fmtNum(t.signal_kons)}</Stat>
+          <Stat label="Stop-Loss"><span className="text-bear">{fmtNum(t.stop_loss)}</span></Stat>
+          <Stat label="Kursziel 1"><span className="text-bull">{fmtNum(t.target_1)}</span></Stat>
+          <Stat label="Kursziel 2"><span className="text-bull">{fmtNum(t.target_2)}</span></Stat>
+          <Stat label="CRV"><span className="text-accent">{fmtNum(t.crv)}</span></Stat>
+        </div>
+
+        {/* Das CRV wurde bisher wie eine Erfolgsaussicht gelesen. Es ist keine.
+            Die Basisraten stammen aus 8.925 simulierten Plänen — siehe
+            frontend/lib/crv.ts und docs/AUDIT_2026-09.md. */}
+        {t.crv != null && (
+          <p className="mt-3 border-t border-edge pt-2 text-[11px] leading-relaxed text-muted">
+            <span className="font-semibold text-slate-300">
+              Das CRV ist ein Verhältnis, keine Wahrscheinlichkeit.
+            </span>{" "}
+            In {CRV_BASE_RATES.sample.toLocaleString("de-DE")} historisch simulierten
+            Plänen wurde das Kursziel in{" "}
+            <span className="font-mono text-slate-300">
+              {(CRV_BASE_RATES.pTarget * 100).toLocaleString("de-DE", {
+                minimumFractionDigits: 1, maximumFractionDigits: 1 })} %
+            </span>{" "}
+            der Fälle zuerst erreicht, der Stopp in{" "}
+            <span className="font-mono text-slate-300">
+              {(CRV_BASE_RATES.pStop * 100).toLocaleString("de-DE", {
+                minimumFractionDigits: 1, maximumFractionDigits: 1 })} %
+            </span>. Nach Handelskosten von {CRV_BASE_RATES.costBps} Basispunkten je
+            Seite lag der realisierte Erwartungswert bei{" "}
+            <span className="font-mono text-bear">
+              {CRV_BASE_RATES.evPerTrade.toLocaleString("de-DE", {
+                minimumFractionDigits: 2, maximumFractionDigits: 2 })} R
+            </span>{" "}
+            je Trade. Das sind universumsweite Basisraten, keine Aussage über
+            diesen einzelnen Titel.
+          </p>
+        )}
       </div>
 
       {row.drivers.zones.length > 0 && (

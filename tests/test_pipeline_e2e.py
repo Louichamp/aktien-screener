@@ -73,6 +73,10 @@ async def test_pipeline_schreibt_vollstaendige_zeile(db):
     assert row is not None
     assert row.total_score is not None and 0 <= row.total_score <= 100
     assert row.rating
+    # Bis in die DB durchgereicht: "STARK KAUFEN" darf seit 2026-09-13 nirgends
+    # mehr entstehen (die Klasse schnitt im Walk-Forward-Test am schlechtesten
+    # ab, siehe docs/AUDIT_2026-09.md).
+    assert row.rating != "STARK KAUFEN"
     # Die neuen Felder muessen tatsaechlich in der DB ankommen — genau das
     # ging vorher verloren (Sub-Scores wurden berechnet und verworfen).
     assert row.score_breakdown, "score_breakdown wurde nicht geschrieben"

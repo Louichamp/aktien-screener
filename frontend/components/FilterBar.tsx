@@ -5,6 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Facets } from "@/lib/types";
 import { RISK_CLASSES, TRENDS } from "@/lib/types";
 
+// Sortierreihenfolge der Rating-Filter. Die Optionen selbst kommen aus den
+// tatsaechlich vorhandenen Werten (Facets); "STARK KAUFEN" steht hier nur
+// noch, damit Altzeilen waehrend der Rotation an der richtigen Stelle
+// einsortiert werden. Vergeben wird das Label seit dem 13.09.2026 nicht mehr.
 const RATING_ORDER = ["STARK KAUFEN", "KAUFEN", "HALTEN", "REDUZIEREN",
                       "VERKAUFEN", "UNKLAR"];
 

@@ -49,6 +49,8 @@ export function ageColor(iso: string | null | undefined): string {
 // Rating-Label -> Stil (KAUFEN grün … VERKAUFEN rot)
 export function ratingStyle(rating: string | null): string {
   switch (rating) {
+    // Wird nicht mehr vergeben (s. docs/AUDIT_2026-09.md); bleibt fuer
+    // Zeilen, die seit dem 13.09.2026 nicht neu berechnet wurden.
     case "STARK KAUFEN": return "bg-bull/25 text-bull ring-1 ring-bull/50";
     case "KAUFEN": return "bg-bull/15 text-bull ring-1 ring-bull/40";
     case "HALTEN": return "bg-warn/15 text-warn ring-1 ring-warn/40";
